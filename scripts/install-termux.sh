@@ -31,7 +31,7 @@ set -a
 [ -f "$HOME_DIR/fastbrain.env" ] && . "$HOME_DIR/fastbrain.env"
 set +a
 export PYTHONPATH="$APP_DIR:${PYTHONPATH:-}"
-exec "$PY" -m fastbrain.cli "$@"
+exec "$PY" -m fastbrain.cli "\$@"
 EOF2
 chmod +x "$HOME_DIR/fastbrain"
 echo "Installed safely in $HOME_DIR"
