@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastbrain-hermes"
+version = "0.1.0"
+description = "Lightweight local-first reflex and skill-routing layer for Hermes on Android/Termux"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+fastbrain = "fastbrain.cli:main"
+
+[tool.setuptools]
+packages = ["fastbrain"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
