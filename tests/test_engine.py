@@ -29,3 +29,19 @@ def test_latest_video_routes_youtube():
 def test_player_switch_uses_successful_working_memory():
     s=stack();s['context'].remember_action('play_music',{'query':'Kesariya','player':'simpmusic'})
     r=s['engine'].route('play it on yt music');assert r.route=='local';assert r.skill=='play_music';assert r.arguments['query']=='Kesariya';assert r.arguments['player']=='ytmusic';assert r.reason=='working_memory'
+
+def test_whatsapp_is_default_message_channel():
+    s=stack();s['memory'].project({'type':'alias','subject':'govind','value':'butagorira','scope':'communication'})
+    r=s['engine'].route('message Govind I am late');assert r.route=='local';assert r.skill=='send_whatsapp';assert r.arguments['contact']=='butagorira';assert r.arguments['message']=='I am late'
+
+def test_sms_requires_explicit_sms_intent():
+    s=stack();r=s['engine'].route('sms Ravi hello');assert r.route=='local';assert r.skill=='send_sms';assert r.arguments['message']=='hello'
+
+def test_send_it_to_him_uses_successful_working_memory():
+    s=stack();s['context'].remember_action('send_whatsapp',{'contact':'butagorira','message':'I am late'})
+    r=s['engine'].route('send it to him');assert r.route=='local';assert r.skill=='send_whatsapp';assert r.arguments['contact']=='butagorira';assert r.arguments['message']=='I am late';assert r.reason=='working_memory'
+
+def test_same_message_to_new_contact():
+    s=stack();s['context'].remember_action('send_whatsapp',{'contact':'butagorira','message':'Meeting at 5'})
+    s['memory'].project({'type':'alias','subject':'ravi','value':'ravi','scope':'communication'})
+    r=s['engine'].route('send the same message to Ravi');assert r.route=='local';assert r.skill=='send_whatsapp';assert r.arguments['contact']=='ravi';assert r.arguments['message']=='Meeting at 5'
