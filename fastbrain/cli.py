@@ -7,6 +7,7 @@ import statistics
 import sys
 import time
 import uuid
+from pathlib import Path
 
 from .api import serve
 from .app import build
@@ -21,6 +22,30 @@ def _summary(values):
         "p95_ms": ordered[max(0, int(len(values) * 0.95) - 1)],
         "mean_ms": statistics.mean(values),
     }
+
+
+def _load_definition(file_arg=None, inline_json=None):
+    if inline_json:
+        try:
+            value = json.loads(inline_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid inline JSON: {exc.msg}") from exc
+        if not isinstance(value, dict):
+            raise ValueError("definition JSON must be an object")
+        return value
+    if not file_arg:
+        raise ValueError("provide a JSON file or --json '<object>'")
+    path = Path(file_arg).expanduser()
+    if not path.is_file():
+        raise ValueError(f"definition file not found: {path}")
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            value = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in {path}: {exc.msg}") from exc
+    if not isinstance(value, dict):
+        raise ValueError("definition JSON must be an object")
+    return value
 
 
 def main():
@@ -73,7 +98,8 @@ def main():
 
     observe = sub.add_parser("learn-observe")
     observe.add_argument("phrase")
-    observe.add_argument("json_file")
+    observe.add_argument("json_file", nargs="?")
+    observe.add_argument("--json", dest="inline_json")
     observe.add_argument("--failed", action="store_true")
 
     sub.add_parser("learn-candidates")
@@ -132,11 +158,17 @@ def main():
         ok=bool(verified) and all(x["ok"] for x in verified); print(json.dumps({"ok":ok,"canonical":canonical,"aliases":verified},indent=2,ensure_ascii=False)); return 0 if ok else 5
 
     if args.cmd == "skill-add":
-        with open(args.json_file,"r",encoding="utf-8") as f: definition=json.load(f)
+        try:
+            definition=_load_definition(args.json_file)
+        except ValueError as exc:
+            print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
         learned=stack["learner"].learn(definition); print(json.dumps({"ok":True,"skill":learned},indent=2,ensure_ascii=False)); return 0
 
     if args.cmd == "learn-observe":
-        with open(args.json_file,"r",encoding="utf-8") as f: definition=json.load(f)
+        try:
+            definition=_load_definition(args.json_file,args.inline_json)
+        except ValueError as exc:
+            print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
         payload=stack["learner"].observe(args.phrase,definition,successful=not args.failed); print(json.dumps(payload,indent=2,ensure_ascii=False)); return 0 if payload.get("ok") else 6
 
     if args.cmd == "learn-candidates":
