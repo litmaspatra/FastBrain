@@ -1,20 +1,136 @@
 from __future__ import annotations
-import shutil, subprocess, time
+
+import os
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
 
 class Executor:
-    def __init__(self,registry,experience):self.registry=registry;self.experience=experience
-    def execute(self,result,dry_run=False):
-        if result.route!='local':return {'executed':False,'route':result.route,'reason':result.reason}
-        skill=self.registry.get(result.skill); argv=self.registry.render_command(skill,result.arguments)
-        if not argv:return {'executed':False,'error':'no_executor'}
-        path=shutil.which(argv[0])
-        if not path:return {'executed':False,'error':'helper_not_found','command':argv[0]}
-        argv[0]=path
-        if dry_run:return {'executed':False,'dry_run':True,'command':argv}
-        st=time.perf_counter()
+    """Execute FastBrain skills without duplicating the working Hermes Android layer.
+
+    Resolution order:
+      1. command already on PATH
+      2. existing helper under ~/hermes-phone/bin, ~/.hermes/bin, or ~/bin
+      3. the stable ~/hermes-phone/bin/phone dispatcher
+
+    This keeps FastBrain independent while reusing the user's tested Android helpers.
+    """
+
+    def __init__(self, registry, experience):
+        self.registry = registry
+        self.experience = experience
+
+    @staticmethod
+    def _helper_candidates(name: str):
+        home = Path.home()
+        return [
+            home / "hermes-phone" / "bin" / name,
+            home / ".hermes" / "bin" / name,
+            home / "bin" / name,
+        ]
+
+    @staticmethod
+    def _is_executable(path: Path) -> bool:
+        return path.is_file() and os.access(path, os.X_OK)
+
+    def _resolve_command(self, result, argv):
+        # 1. Normal PATH lookup.
+        path = shutil.which(argv[0])
+        if path:
+            return [path, *argv[1:]], "path"
+
+        # 2. Existing Hermes phone helpers do not need to be on PATH.
+        for candidate in self._helper_candidates(argv[0]):
+            if self._is_executable(candidate):
+                return [str(candidate), *argv[1:]], "hermes_helper"
+
+        # 3. Prefer the stable dispatcher used by the working Hermes phone stack.
+        dispatcher = Path.home() / "hermes-phone" / "bin" / "phone"
+        if not self._is_executable(dispatcher):
+            return None, None
+
+        rest = list(argv[1:])
+        skill = result.skill
+
+        if skill == "call_contact":
+            return [str(dispatcher), "call", *rest], "phone_dispatcher"
+        if skill == "send_whatsapp":
+            return [str(dispatcher), "whatsapp", *rest], "phone_dispatcher"
+        if skill == "send_sms":
+            return [str(dispatcher), "sms", *rest], "phone_dispatcher"
+        if skill == "open_app":
+            return [str(dispatcher), "open", *rest], "phone_dispatcher"
+        if skill in {"torch_on", "torch_off", "battery_status", "wifi_status", "set_volume"}:
+            return [str(dispatcher), "device", *rest], "phone_dispatcher"
+        if skill in {"play_music", "choose_music_from_context"}:
+            query = result.arguments.get("query") or (rest[0] if rest else "music")
+            return [str(dispatcher), "play", "music", str(query)], "phone_dispatcher"
+        if skill == "create_reminder":
+            return [str(dispatcher), "remind", *rest], "phone_dispatcher"
+        if skill == "create_obsidian_note":
+            text = result.arguments.get("text") or (rest[0] if rest else "")
+            return [str(dispatcher), "note", "create", "FastBrain", str(text)], "phone_dispatcher"
+
+        return None, None
+
+    def execute(self, result, dry_run=False):
+        if result.route != "local":
+            return {"executed": False, "route": result.route, "reason": result.reason}
+
+        skill = self.registry.get(result.skill)
+        argv = self.registry.render_command(skill, result.arguments)
+        if not argv:
+            return {"executed": False, "error": "no_executor"}
+
+        resolved, source = self._resolve_command(result, argv)
+        if not resolved:
+            return {
+                "executed": False,
+                "error": "helper_not_found",
+                "command": argv[0],
+                "searched": [str(p) for p in self._helper_candidates(argv[0])],
+                "dispatcher": str(Path.home() / "hermes-phone" / "bin" / "phone"),
+            }
+
+        if dry_run:
+            return {
+                "executed": False,
+                "dry_run": True,
+                "command": resolved,
+                "executor_source": source,
+            }
+
+        started = time.perf_counter()
         try:
-            p=subprocess.run(argv,timeout=float(skill.get('timeout',8)),capture_output=True,text=True)
-            ms=(time.perf_counter()-st)*1000;ok=p.returncode==0;self.experience.record(result.skill,ok,ms)
-            return {'executed':True,'success':ok,'returncode':p.returncode,'latency_ms':ms,'stdout':p.stdout[-1000:],'stderr':p.stderr[-1000:]}
-        except Exception as e:
-            ms=(time.perf_counter()-st)*1000;self.experience.record(result.skill,False,ms);return {'executed':True,'success':False,'latency_ms':ms,'error':str(e)}
+            proc = subprocess.run(
+                resolved,
+                timeout=float(skill.get("timeout", 8)),
+                capture_output=True,
+                text=True,
+            )
+            latency_ms = (time.perf_counter() - started) * 1000
+            ok = proc.returncode == 0
+            self.experience.record(result.skill, ok, latency_ms)
+            return {
+                "executed": True,
+                "success": ok,
+                "returncode": proc.returncode,
+                "latency_ms": latency_ms,
+                "executor_source": source,
+                "command": resolved,
+                "stdout": proc.stdout[-1000:],
+                "stderr": proc.stderr[-1000:],
+            }
+        except Exception as exc:
+            latency_ms = (time.perf_counter() - started) * 1000
+            self.experience.record(result.skill, False, latency_ms)
+            return {
+                "executed": True,
+                "success": False,
+                "latency_ms": latency_ms,
+                "executor_source": source,
+                "command": resolved,
+                "error": str(exc),
+            }
