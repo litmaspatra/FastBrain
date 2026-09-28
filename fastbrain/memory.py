@@ -12,14 +12,26 @@ class MemoryBridge:
     """Hindsight bridge supporting hot cache, direct lookup, and safe hybrid promotion."""
 
     PROMOTABLE_TYPES = {
-        "alias", "preference", "default", "relationship", "routine",
-        "skill_hint", "constraint", "channel_preference", "time_preference",
+        "alias",
+        "preference",
+        "default",
+        "relationship",
+        "routine",
+        "skill_hint",
+        "constraint",
+        "channel_preference",
+        "time_preference",
     }
 
     MIN_PROMOTE_CONFIDENCE = {
-        "alias": 0.85, "preference": 0.75, "default": 0.80,
-        "relationship": 0.80, "routine": 0.75, "skill_hint": 0.80,
-        "constraint": 0.85, "channel_preference": 0.80,
+        "alias": 0.85,
+        "preference": 0.75,
+        "default": 0.80,
+        "relationship": 0.80,
+        "routine": 0.75,
+        "skill_hint": 0.80,
+        "constraint": 0.85,
+        "channel_preference": 0.80,
         "time_preference": 0.75,
     }
 
@@ -42,35 +54,13 @@ class MemoryBridge:
             return value
         return " ".join(value.strip().split())
 
-    def _build_query(self, typ, subject, scope=""):
-        subject = str(subject).strip()
-        scope = str(scope).strip()
-        if typ == "alias":
-            return f"What alias, nickname, alternate name, handle, or contact identity is associated with {subject}?"
-        if typ == "preference":
-            if scope:
-                return f"What are the user's preferences for {scope} in the context of {subject}?"
-            return f"What does the user prefer regarding {subject}?"
-        if typ == "channel_preference":
-            return f"What communication channel does the user prefer for {subject}?"
-        if typ == "time_preference":
-            return f"What time-related preference does the user have for {subject}?"
-        if typ == "routine":
-            return f"What routine does the user follow for {subject}?"
-        if typ == "default":
-            return f"What default should be used for {subject}{' in ' + scope if scope else ''}?"
-        if typ == "constraint":
-            return f"What constraint or rule applies to {subject}{' in ' + scope if scope else ''}?"
-        if typ == "relationship":
-            return f"What relationship or identity information is known about {subject}?"
-        return f"What relevant memory is known about {subject}{' for ' + scope if scope else ''}?"
-
     def _normalize_alias(self, subject, value):
         value = self._clean_text(value)
         if not isinstance(value, str) or not value:
             return None
         if len(value) <= 64 and re.fullmatch(r"[@\w.+-]+", value, flags=re.UNICODE):
             return value
+
         esc = re.escape(subject)
         patterns = [
             rf"(?i)\b{esc}\b\s*(?:=|->|→|:|is\s+also\s+known\s+as|is\s+known\s+as|aka|alias(?:\s+is)?)\s*[`\"']?([@\w.+-]{{2,64}})",
@@ -84,11 +74,61 @@ class MemoryBridge:
                     return candidate
         return None
 
+    def _normalize_preference(self, subject, scope, value):
+        value = self._clean_text(value)
+        if not isinstance(value, str) or not value:
+            return None
+
+        # Preserve already concise values.
+        if len(value) <= 80 and not re.search(r"(?i)\b(user|preference|prefers|likes|favorite|favourite)\b", value):
+            return value.rstrip(".")
+
+        patterns = [
+            r"(?i)\bpreference\s+is\s+(.+?)(?:\.|$)",
+            r"(?i)\bprefers?\s+(.+?)(?:\.|$)",
+            r"(?i)\blikes?\s+(.+?)(?:\.|$)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, value)
+            if match:
+                candidate = match.group(1).strip(" `\"'.")
+                # Remove duplicated context suffixes when Hindsight phrases them naturally.
+                if scope and subject:
+                    candidate = re.sub(
+                        rf"(?i)\s+(?:in|during|for)\s+(?:the\s+)?{re.escape(subject)}\b.*$",
+                        "",
+                        candidate,
+                    ).strip()
+                if candidate and len(candidate) <= 120:
+                    return candidate
+        return None
+
+    def _query_for(self, typ, subject, scope):
+        if typ == "alias":
+            return f"What alias, nickname, alternate name, handle, or contact identity is associated with {subject}?"
+        if typ == "preference":
+            context = f" in the context of {subject}" if subject else ""
+            topic = f" for {scope}" if scope else ""
+            return f"What are the user's preferences{topic}{context}?"
+        if typ == "default":
+            return f"What default should be used for {subject} in {scope or 'this context'}?"
+        if typ == "channel_preference":
+            return f"What communication channel does the user prefer for {subject}?"
+        if typ == "time_preference":
+            return f"What time preference does the user have for {subject} in {scope or 'this context'}?"
+        if typ == "routine":
+            return f"What routine does the user follow for {subject} in {scope or 'this context'}?"
+        if typ == "constraint":
+            return f"What important constraint applies to {subject} in {scope or 'this context'}?"
+        return f"What should FastBrain remember about {subject} for {typ} in {scope or 'this context'}?"
+
     def _normalize_direct(self, typ, subject, scope, data):
         if not isinstance(data, dict) or "value" not in data:
             return data
+
         value = data.get("value")
         confidence = float(data.get("confidence", 0.8) or 0.8)
+
         if typ == "alias":
             alias = self._normalize_alias(subject, value)
             if not alias:
@@ -97,6 +137,15 @@ class MemoryBridge:
                 return data
             data["value"] = alias
             data["confidence"] = max(confidence, 0.90)
+
+        elif typ == "preference":
+            pref = self._normalize_preference(subject, scope, value)
+            if not pref:
+                data["_promotable"] = False
+                data["_promotion_reason"] = "preference_not_structurally_resolved"
+                return data
+            data["value"] = pref
+
         elif isinstance(value, str):
             compact = self._clean_text(value)
             if len(compact) > 240:
@@ -104,6 +153,7 @@ class MemoryBridge:
                 data["_promotion_reason"] = "value_too_long"
                 return data
             data["value"] = compact
+
         data.setdefault("type", typ)
         data.setdefault("subject", subject)
         data.setdefault("scope", scope)
@@ -122,63 +172,74 @@ class MemoryBridge:
             return False, f"confidence_below_{minimum:.2f}"
         return True, "eligible"
 
-    def _run_direct_command(self, payload):
-        started = time.perf_counter()
-        proc = subprocess.run(
-            shlex.split(self.cfg.hindsight_cmd),
-            input=json.dumps(payload), text=True, capture_output=True,
-            timeout=self.cfg.direct_timeout,
-        )
-        return proc, (time.perf_counter() - started) * 1000
+    def _run_direct_transport(self, payload):
+        if self.cfg.hindsight_cmd:
+            proc = subprocess.run(
+                shlex.split(self.cfg.hindsight_cmd),
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                timeout=self.cfg.direct_timeout,
+            )
+            return {
+                "transport": "command",
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            }
+        if self.cfg.hindsight_url:
+            request = urllib.request.Request(
+                self.cfg.hindsight_url + self.cfg.hindsight_path,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=self.cfg.direct_timeout) as response:
+                return {
+                    "transport": "http",
+                    "status": getattr(response, "status", 200),
+                    "stdout": response.read().decode(),
+                    "stderr": "",
+                }
+        return {"transport": "none", "stdout": "", "stderr": "not configured"}
 
     def debug_direct(self, typ, subject, scope=""):
         payload = {
-            "type": typ, "subject": subject, "scope": scope,
-            "query": self._build_query(typ, subject, scope), "fastbrain": True,
+            "type": typ,
+            "subject": subject,
+            "scope": scope,
+            "query": self._query_for(typ, subject, scope),
+            "fastbrain": True,
         }
-        if self.cfg.hindsight_cmd:
-            started = time.perf_counter()
-            try:
-                proc, latency = self._run_direct_command(payload)
-                return {
-                    "transport": "command", "query": payload["query"],
-                    "command": shlex.split(self.cfg.hindsight_cmd),
-                    "returncode": proc.returncode, "latency_ms": latency,
-                    "stdout": proc.stdout[-4000:], "stderr": proc.stderr[-4000:],
-                }
-            except Exception as exc:
-                return {
-                    "transport": "command", "query": payload["query"],
-                    "latency_ms": (time.perf_counter() - started) * 1000,
-                    "error": repr(exc),
-                }
-        return {"transport": "http" if self.cfg.hindsight_url else "none", "query": payload["query"]}
+        started = time.perf_counter()
+        try:
+            result = self._run_direct_transport(payload)
+            result["query"] = payload["query"]
+            result["latency_ms"] = (time.perf_counter() - started) * 1000
+            if self.cfg.hindsight_cmd:
+                result["command"] = shlex.split(self.cfg.hindsight_cmd)
+            return result
+        except Exception as exc:
+            return {
+                "query": payload["query"],
+                "latency_ms": (time.perf_counter() - started) * 1000,
+                "error": repr(exc),
+            }
 
     def lookup_direct(self, typ, subject, scope=""):
         payload = {
             "type": typ,
             "subject": subject,
             "scope": scope,
-            "query": self._build_query(typ, subject, scope),
+            "query": self._query_for(typ, subject, scope),
             "fastbrain": True,
         }
         started = time.perf_counter()
         try:
-            if self.cfg.hindsight_cmd:
-                proc, _ = self._run_direct_command(payload)
-                if proc.returncode:
-                    return None
-                data = json.loads(proc.stdout or "{}")
-            elif self.cfg.hindsight_url:
-                request = urllib.request.Request(
-                    self.cfg.hindsight_url + self.cfg.hindsight_path,
-                    data=json.dumps(payload).encode(),
-                    headers={"Content-Type": "application/json"}, method="POST",
-                )
-                with urllib.request.urlopen(request, timeout=self.cfg.direct_timeout) as response:
-                    data = json.loads(response.read().decode())
-            else:
+            transport = self._run_direct_transport(payload)
+            if transport.get("transport") == "command" and transport.get("returncode"):
                 return None
+            data = json.loads(transport.get("stdout") or "{}")
 
             if isinstance(data, dict) and "result" in data and isinstance(data["result"], dict):
                 data = data["result"]
@@ -192,8 +253,11 @@ class MemoryBridge:
                 if value is None:
                     return None
                 data = {
-                    "type": typ, "subject": subject, "scope": scope,
-                    "value": value, "confidence": data.get("confidence", 0.8),
+                    "type": typ,
+                    "subject": subject,
+                    "scope": scope,
+                    "value": value,
+                    "confidence": data.get("confidence", 0.8),
                 }
 
             data = self._normalize_direct(typ, subject, scope, data)
@@ -211,8 +275,10 @@ class MemoryBridge:
         if not promotable:
             return False, reason
         memory = {
-            "type": typ, "subject": subject,
-            "scope": result.get("scope", scope), "value": result["value"],
+            "type": typ,
+            "subject": subject,
+            "scope": result.get("scope", scope),
+            "value": result["value"],
             "confidence": result.get("confidence", 0.8),
             "priority": result.get("priority", 50),
         }
@@ -225,6 +291,7 @@ class MemoryBridge:
             result = self.lookup_hot(typ, subject, scope)
             if result:
                 return result
+
         if mode in {"direct", "hybrid"}:
             result = self.lookup_direct(typ, subject, scope)
             if result and mode == "hybrid":
@@ -232,4 +299,5 @@ class MemoryBridge:
                 result["_promoted"] = promoted
                 result["_promotion_reason"] = reason
             return result
+
         return None
