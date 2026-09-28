@@ -98,11 +98,16 @@ High-risk skills require manual integration and must not be auto-registered.
 
 For a reusable workflow that Hermes successfully solved and that is safe to automate:
 
-1. Create a helper under `~/.fastbrain/helpers/NAME`.
-2. Make it executable with `chmod 700 ~/.fastbrain/helpers/NAME`.
-3. Test it directly with harmless or dry-run inputs when possible.
-4. Register a learned skill whose executor command is `NAME`.
-5. Test routing with `~/.fastbrain/fastbrain route "example phrase" --dry-run`.
+1. Inspect the already-working phone helper or dispatcher commands for every action in the workflow. Never guess an Android command when an existing helper can be inspected.
+2. Create a new helper only under `~/.fastbrain/helpers/NAME`. Do not edit `~/hermes-phone`, `~/.hermes/bin`, OmniRoute, Hindsight, or system packages.
+3. Keep the helper minimal: compose existing verified helpers/dispatcher actions rather than reimplementing them.
+4. Make it executable with `chmod 700 ~/.fastbrain/helpers/NAME`.
+5. Test the helper directly. For workflows that cause side effects, use harmless checks first and only perform the real action when the user asked for it.
+6. Register a learned skill whose `executor.command` is `NAME` and whose examples contain the user's natural trigger phrase.
+7. Verify registration with `~/.fastbrain/fastbrain skills` and verify routing with `~/.fastbrain/fastbrain route "TRIGGER" --dry-run`.
+8. Only report success when the dry-run resolves `route: local`, the expected learned skill id, and `executor_source: fastbrain_helper`.
+
+For a first test workflow such as `prepare whatsapp` meaning "open WhatsApp and set media volume to 40", Hermes must first inspect the working commands for opening WhatsApp and setting media volume. It should then create a FastBrain-owned helper from those known-good commands and register a low-risk learned skill with examples such as `prepare whatsapp`, `get whatsapp ready`, and `whatsapp ready`.
 
 FastBrain searches `~/.fastbrain/helpers/` before Hermes helper directories for learned helper commands.
 
