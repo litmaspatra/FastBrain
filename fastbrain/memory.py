@@ -35,6 +35,10 @@ class MemoryBridge:
         "time_preference": 0.75,
     }
 
+    TIME_BUCKETS = {"morning", "afternoon", "evening", "night"}
+    NEGATIVE_TTL_SECONDS = 3600
+    NEGATIVE_SENTINEL = "__fastbrain_negative__"
+
     def __init__(self, db, cfg):
         self.db = db
         self.cfg = cfg
@@ -46,13 +50,35 @@ class MemoryBridge:
         result = self.db.hot_get(typ, subject, scope)
         if result:
             result["_source"] = "hot"
+            if isinstance(result.get("value"), dict) and result["value"].get(self.NEGATIVE_SENTINEL):
+                result["_negative"] = True
         return result
+
+    def _cache_negative(self, typ, subject, scope, reason="no_relevant_direct_memory"):
+        self.project(
+            {
+                "type": typ,
+                "subject": subject,
+                "scope": scope,
+                "value": {self.NEGATIVE_SENTINEL: True, "reason": reason},
+                "confidence": 1.0,
+                "priority": 1,
+                "expires_at": time.time() + self.NEGATIVE_TTL_SECONDS,
+            }
+        )
 
     @staticmethod
     def _clean_text(value):
         if not isinstance(value, str):
             return value
         return " ".join(value.strip().split())
+
+    @staticmethod
+    def _raw_content(data):
+        raw = data.get("raw") if isinstance(data, dict) else None
+        if isinstance(raw, dict):
+            return str(raw.get("content") or raw.get("text") or "")
+        return str(raw or "")
 
     def _normalize_alias(self, subject, value):
         value = self._clean_text(value)
@@ -79,7 +105,6 @@ class MemoryBridge:
         if not isinstance(value, str) or not value:
             return None
 
-        # Preserve already concise values.
         if len(value) <= 80 and not re.search(r"(?i)\b(user|preference|prefers|likes|favorite|favourite)\b", value):
             return value.rstrip(".")
 
@@ -92,7 +117,6 @@ class MemoryBridge:
             match = re.search(pattern, value)
             if match:
                 candidate = match.group(1).strip(" `\"'.")
-                # Remove duplicated context suffixes when Hindsight phrases them naturally.
                 if scope and subject:
                     candidate = re.sub(
                         rf"(?i)\s+(?:in|during|for)\s+(?:the\s+)?{re.escape(subject)}\b.*$",
@@ -122,8 +146,35 @@ class MemoryBridge:
             return f"What important constraint applies to {subject} in {scope or 'this context'}?"
         return f"What should FastBrain remember about {subject} for {typ} in {scope or 'this context'}?"
 
+    def _context_matches(self, typ, subject, data):
+        """Reject semantically-near but contextually-wrong memories.
+
+        Hindsight may return the closest music preference even when the requested
+        time bucket differs. For time-bucket preferences we require explicit
+        evidence for the requested bucket in the recalled memory.
+        """
+        if typ not in {"preference", "time_preference"}:
+            return True, "context_not_required"
+        wanted = str(subject or "").lower().strip()
+        if wanted not in self.TIME_BUCKETS:
+            return True, "non_time_subject"
+
+        text = self._raw_content(data).lower()
+        mentioned = {bucket for bucket in self.TIME_BUCKETS if re.search(rf"\b{bucket}\b", text)}
+        if wanted in mentioned:
+            return True, "time_context_match"
+        if mentioned:
+            return False, "time_context_mismatch"
+        return False, "time_context_not_explicit"
+
     def _normalize_direct(self, typ, subject, scope, data):
         if not isinstance(data, dict) or "value" not in data:
+            return data
+
+        context_ok, context_reason = self._context_matches(typ, subject, data)
+        if not context_ok:
+            data["_promotable"] = False
+            data["_promotion_reason"] = context_reason
             return data
 
         value = data.get("value")
@@ -290,11 +341,24 @@ class MemoryBridge:
         if mode in {"hot", "hybrid"}:
             result = self.lookup_hot(typ, subject, scope)
             if result:
+                if result.get("_negative"):
+                    return None
                 return result
 
         if mode in {"direct", "hybrid"}:
             result = self.lookup_direct(typ, subject, scope)
-            if result and mode == "hybrid":
+            if not result:
+                if mode == "hybrid":
+                    self._cache_negative(typ, subject, scope, "direct_empty")
+                return None
+
+            promotable, reason = self.should_promote(typ, result)
+            if not promotable:
+                if mode == "hybrid":
+                    self._cache_negative(typ, subject, scope, reason)
+                return None
+
+            if mode == "hybrid":
                 promoted, reason = self.promote_direct_result(typ, subject, scope, result)
                 result["_promoted"] = promoted
                 result["_promotion_reason"] = reason
