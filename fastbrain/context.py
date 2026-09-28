@@ -17,7 +17,10 @@ class ContextEngine:
         return []
 
     def resolve_alias(self, name: str):
-        m = self.memory.lookup("alias", name, "communication")
+        # Contact names must stay reflex-fast. Check only the FastBrain hot cache
+        # here; on a miss, pass the literal name to the existing phone contact
+        # resolver instead of paying a multi-second Hindsight lookup.
+        m = self.memory.lookup_hot("alias", name, "communication")
         return (m.get("value") if m else name, m.get("_source", "none") if m else "none")
 
     def recent(self, kind):
