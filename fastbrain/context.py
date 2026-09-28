@@ -17,9 +17,6 @@ class ContextEngine:
         return []
 
     def resolve_alias(self, name: str):
-        # Contact names must stay reflex-fast. Check only the FastBrain hot cache
-        # here; on a miss, pass the literal name to the existing phone contact
-        # resolver instead of paying a multi-second Hindsight lookup.
         m = self.memory.lookup_hot("alias", name, "communication")
         return (m.get("value") if m else name, m.get("_source", "none") if m else "none")
 
@@ -29,6 +26,22 @@ class ContextEngine:
 
     def remember_entity(self, kind, value):
         self.db.work_set(kind, str(value).lower(), value)
+
+    def set_pending_confirmation(self, payload):
+        self.db.work_set("pending_confirmation", "contact", payload)
+
+    def pending_confirmation(self, max_age_seconds=60):
+        rows = self.db.work_recent("pending_confirmation", 1)
+        if not rows:
+            return None
+        row = rows[0]
+        if time.time() - float(row.get("updated_at", 0)) > max_age_seconds:
+            self.clear_pending_confirmation()
+            return None
+        return row["value"]
+
+    def clear_pending_confirmation(self):
+        self.db.work_delete("pending_confirmation", "contact")
 
     def remember_action(self, skill, arguments):
         self.db.work_set("action", skill, {"skill": skill, "arguments": arguments})
