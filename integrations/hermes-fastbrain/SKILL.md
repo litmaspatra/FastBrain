@@ -12,22 +12,36 @@ FastBrain is the phone's low-latency reflex/router layer. Use it for reusable de
 When the user explicitly teaches a durable alias, preference, default, routine, channel preference, constraint, or reusable FastBrain behavior:
 
 1. Store or update the durable fact in Hindsight using `hmem_remember` or `hmem_update` when appropriate.
-2. Project performance-critical facts into FastBrain immediately with `~/.fastbrain/fastbrain cache-put ...`.
-3. Do not merely say FastBrain will know it. Verify the FastBrain write succeeded.
+2. Project performance-critical facts into FastBrain immediately.
+3. Verify the FastBrain write succeeded before claiming the bridge is updated.
 
-For contact aliases, always use type `alias`, scope `communication`, and lowercase the alias subject. Example:
+For contact aliases, use type `alias`, scope `communication`, and lowercase matching is handled by FastBrain internally.
 
-```bash
-~/.fastbrain/fastbrain cache-put alias ashu "Anshul Sharma" --scope communication
-```
-
-When useful, verify with:
+### One alias
 
 ```bash
-~/.fastbrain/fastbrain route "call Ashu" --dry-run
+~/.fastbrain/fastbrain cache-put alias govind butagorira --scope communication
 ```
 
-The expected contact is `Anshul Sharma` with `context_source` equal to `hot`.
+### Several aliases for one canonical contact
+
+Prefer the atomic helper command:
+
+```bash
+~/.fastbrain/fastbrain alias-set butagorira govind Gobimaru Devesh "DD Rao"
+```
+
+The command writes each alias to the hot cache and returns per-alias verification. It does not write Hindsight; Hermes must save/update the durable relationship with Hindsight first.
+
+When the user says that several names refer to the same person, choose a canonical contact value that the existing Android contact resolver can actually resolve. Do not invent a canonical contact. If a known existing FastBrain alias already maps a trusted name to the real device contact, reuse that target.
+
+After projecting aliases, verify at least one representative route with `--dry-run` when practical:
+
+```bash
+~/.fastbrain/fastbrain route "call Gobimaru" --dry-run
+```
+
+The expected result is a local `call_contact` route whose contact is the canonical contact and whose context source is `hot`.
 
 ## Core rules
 
@@ -37,6 +51,7 @@ The expected contact is `Anshul Sharma` with `context_source` equal to `hot`.
 - Keep Hindsight as the durable source of truth and FastBrain hot memory as the speed layer.
 - Avoid duplicate Hindsight memories. Update or merge an existing fact when appropriate.
 - A missing FastBrain alias is not an error; literal contact names are passed to the Android contact resolver.
+- Microphone misrecognitions and fuzzy contact suggestions are short-lived working context only. Never convert them into durable aliases unless the user explicitly teaches that mapping.
 
 ## FastBrain command
 
@@ -55,8 +70,7 @@ Use:
 Examples:
 
 ```bash
-~/.fastbrain/fastbrain cache-put alias ashu "Anshul Sharma" --scope communication
-~/.fastbrain/fastbrain cache-put alias anshul "Anshul Sharma" --scope communication
+~/.fastbrain/fastbrain cache-put alias govind butagorira --scope communication
 ~/.fastbrain/fastbrain cache-put preference evening "upbeat hindi" --scope music
 ```
 
