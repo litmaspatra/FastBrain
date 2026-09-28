@@ -19,6 +19,7 @@ class Executor:
     def _helper_candidates(name: str):
         home = Path.home()
         return [
+            home / ".fastbrain" / "helpers" / name,
             home / "hermes-phone" / "bin" / name,
             home / ".hermes" / "bin" / name,
             home / "bin" / name,
@@ -41,8 +42,6 @@ class Executor:
                         mode = "simpmusic"
                 return [str(fast_media), mode, query], "fastbrain_media"
 
-        # Messaging must preserve channel semantics before generic helper lookup.
-        # ~/hermes-phone/bin/send-message is SMS-only; WhatsApp has its own helper.
         if result.skill in {"send_whatsapp", "send_sms"}:
             helper_name = "whatsapp-message" if result.skill == "send_whatsapp" else "send-message"
             contact = str(result.arguments.get("contact") or "")
@@ -57,7 +56,8 @@ class Executor:
 
         for candidate in self._helper_candidates(argv[0]):
             if self._is_executable(candidate):
-                return [str(candidate), *argv[1:]], "hermes_helper"
+                source = "fastbrain_helper" if "/.fastbrain/helpers/" in str(candidate) else "hermes_helper"
+                return [str(candidate), *argv[1:]], source
 
         dispatcher = Path.home() / "hermes-phone" / "bin" / "phone"
         if not self._is_executable(dispatcher):
