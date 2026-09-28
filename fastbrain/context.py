@@ -36,6 +36,10 @@ class ContextEngine:
         if arguments.get("message"):
             self.db.work_set("message", "last", arguments["message"])
         if arguments.get("query"):
+            self.db.work_set("media_query", "last", arguments["query"])
+        if arguments.get("player"):
+            self.db.work_set("media_player", "last", arguments["player"])
+        if skill in {"play_music", "choose_music_from_context"} and arguments.get("query"):
             self.db.work_set("music_query", "last", arguments["query"])
             self.remember_entity("track", arguments["query"])
 
