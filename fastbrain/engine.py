@@ -20,9 +20,9 @@ class FastBrain:
             if person and message:return 'send_whatsapp',.995,{'contact':person,'message':message},'working_memory'
         if low in {'play another one','play another','another song','play something else'}:
             recent=self.context.recent('music_query')
-            args={'query':'music'}
-            if recent:args['avoid']=recent
-            return 'play_music',.995,args,'working_memory'
+            if recent:
+                return 'play_music',.995,{'query':recent,'avoid':recent},'working_memory'
+            return None,0,{},''
         return None,0,{},''
 
     def _extract(self,text,skill):
