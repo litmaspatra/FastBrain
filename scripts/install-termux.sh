@@ -73,7 +73,7 @@ exec "$PY" -m fastbrain.cli "\$@"
 EOF2
 chmod +x "$HOME_DIR/fastbrain"
 
-# Install only FastBrain's own Hermes skill. No Hermes config or existing skill is edited.
+# Install FastBrain's Hermes skill. Existing skills are not edited.
 HERMES_SKILL_DIR="$HOME/.hermes/skills/fastbrain"
 if [ -d "$HOME/.hermes" ] && [ -f "$ROOT/integrations/hermes-fastbrain/SKILL.md" ]; then
   mkdir -p "$HERMES_SKILL_DIR"
@@ -82,6 +82,27 @@ if [ -d "$HOME/.hermes" ] && [ -f "$ROOT/integrations/hermes-fastbrain/SKILL.md"
   echo "Installed Hermes FastBrain integration skill: $HERMES_SKILL_DIR/SKILL.md"
 fi
 
+# Add one bounded persistent note so Hermes knows how to bridge durable learning
+# into FastBrain even if skill discovery changes. Preserve all existing content.
+LEARNED="$HOME/hermes-phone/LEARNED.md"
+MARKER_BEGIN='<!-- FASTBRAIN_BRIDGE_BEGIN -->'
+MARKER_END='<!-- FASTBRAIN_BRIDGE_END -->'
+if [ -f "$LEARNED" ] && ! grep -Fq "$MARKER_BEGIN" "$LEARNED"; then
+  cat >> "$LEARNED" <<'EOF3'
+
+<!-- FASTBRAIN_BRIDGE_BEGIN -->
+## FastBrain bridge
+- FastBrain is the low-latency router at `~/.fastbrain/fastbrain`; Hermes remains the full reasoning fallback.
+- For a durable alias/preference/default/routine/correction that should be fast, update Hindsight as source of truth and also project it into FastBrain hot cache.
+- Contact aliases use: `~/.fastbrain/fastbrain cache-put alias <lowercase-alias> "<resolved contact>" --scope communication`.
+- Verify FastBrain writes instead of only claiming they were stored.
+- Reusable low/medium-risk workflows may become FastBrain helpers under `~/.fastbrain/helpers/` plus a registered FastBrain skill.
+- Do not overwrite existing Hermes phone helpers merely to teach FastBrain a new workflow.
+<!-- FASTBRAIN_BRIDGE_END -->
+EOF3
+  echo "Added bounded FastBrain bridge note to $LEARNED"
+fi
+
 echo "Installed safely in $HOME_DIR"
-echo "No pip install was run; no OmniRoute/Hindsight/system Python or existing Hermes helper files were modified."
+echo "No pip install was run; no OmniRoute/Hindsight/system Python or existing Hermes helper files were replaced."
 echo "Run: $HOME_DIR/fastbrain doctor"
