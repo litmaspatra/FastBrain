@@ -64,6 +64,10 @@ def main():
     cache_delete.add_argument("subject")
     cache_delete.add_argument("--scope", default="")
 
+    alias_set = sub.add_parser("alias-set")
+    alias_set.add_argument("canonical")
+    alias_set.add_argument("aliases", nargs="+")
+
     skill_add = sub.add_parser("skill-add")
     skill_add.add_argument("json_file")
 
@@ -119,6 +123,38 @@ def main():
         deleted = stack["db"].hot_delete(args.type, args.subject, args.scope)
         print(json.dumps({"deleted": deleted, "type": args.type, "subject": args.subject, "scope": args.scope}, indent=2))
         return 0
+
+    if args.cmd == "alias-set":
+        canonical = args.canonical.strip()
+        aliases = []
+        seen = set()
+        for raw in args.aliases:
+            alias = " ".join(raw.strip().split())
+            key = alias.lower()
+            if not alias or key in seen:
+                continue
+            seen.add(key)
+            aliases.append(alias)
+            stack["memory"].project({
+                "type": "alias",
+                "subject": alias,
+                "value": canonical,
+                "scope": "communication",
+                "confidence": 1,
+                "priority": 95,
+            })
+        verified = []
+        for alias in aliases:
+            hit = stack["memory"].lookup_hot("alias", alias, "communication")
+            verified.append({
+                "alias": alias,
+                "canonical": hit.get("value") if hit else None,
+                "ok": bool(hit and hit.get("value") == canonical),
+                "source": hit.get("_source") if hit else None,
+            })
+        ok = bool(verified) and all(item["ok"] for item in verified)
+        print(json.dumps({"ok": ok, "canonical": canonical, "aliases": verified}, indent=2, ensure_ascii=False))
+        return 0 if ok else 5
 
     if args.cmd == "skill-add":
         with open(args.json_file, "r", encoding="utf-8") as f:
