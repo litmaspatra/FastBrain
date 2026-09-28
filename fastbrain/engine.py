@@ -6,6 +6,45 @@ class FastBrain:
     def __init__(self,cfg,db,registry,semantic,context,micro,experience):
         self.cfg=cfg;self.db=db;self.registry=registry;self.semantic=semantic;self.context=context;self.micro=micro;self.experience=experience
 
+    def _message_intent(self,text):
+        t=' '.join(text.strip().split());low=t.lower()
+        recent_person=self.context.recent('person');recent_message=self.context.recent('message')
+
+        # Explicit SMS only. SMS is never selected implicitly.
+        m=re.match(r'^(?:sms|text)\s+([^\s]+)\s+(.+)$',t,re.I)
+        if m:return 'send_sms',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
+        m=re.match(r'^send\s+sms\s+to\s+([^\s]+)\s+(.+)$',t,re.I)
+        if m:return 'send_sms',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
+        if low in {'send the same message by sms','send same message by sms','send it by sms'}:
+            if recent_person and recent_message:return 'send_sms',.995,{'contact':recent_person,'message':recent_message},'working_memory'
+
+        # WhatsApp is the default messaging channel.
+        m=re.match(r'^(?:message|whatsapp)\s+([^\s]+)\s+(.+)$',t,re.I)
+        if m:return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
+        m=re.match(r'^send\s+([^\s]+)\s+(.+)$',t,re.I)
+        if m and m.group(1).lower() not in {'it','that','this','the','same','sms'}:
+            return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
+        m=re.match(r'^send\s+(.+?)\s+to\s+([^\s]+)$',t,re.I)
+        if m and m.group(1).lower() not in {'it','that','this','the same message','same message'}:
+            return 'send_whatsapp',.995,{'contact':m.group(2).strip(),'message':m.group(1).strip()},'deterministic'
+
+        # New text to the most recent person.
+        m=re.match(r'^(?:message|send|whatsapp)\s+(?:him|her|them)\s+(.+)$',t,re.I)
+        if m and recent_person:
+            return 'send_whatsapp',.995,{'contact':recent_person,'message':m.group(1).strip()},'working_memory'
+
+        # Reuse the last successfully sent message.
+        if low in {'send the same message','send same message','message him the same','send it again','send it to him','send it to her','send it to them','send that to him','send that to her'}:
+            if recent_person and recent_message:
+                return 'send_whatsapp',.995,{'contact':recent_person,'message':recent_message},'working_memory'
+        m=re.match(r'^send\s+(?:the\s+)?same\s+message\s+to\s+([^\s]+)$',t,re.I)
+        if m and recent_message:
+            return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':recent_message},'working_memory'
+        m=re.match(r'^send\s+(?:it|that|this)\s+to\s+([^\s]+)$',t,re.I)
+        if m and recent_message:
+            return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':recent_message},'working_memory'
+        return None,0,{},''
+
     def _media_intent(self,text):
         t=' '.join(text.strip().split()); low=t.lower(); recent=self.context.recent('media_query')
         if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on (?:yt music|youtube music)',low):
@@ -24,17 +63,9 @@ class FastBrain:
         if m:return 'play_video',.995,{'query':m.group(1).strip(),'player':'youtube','latest':False},'deterministic'
         m=re.match(r'^(?:play|show|open|watch)\s+(?:the\s+)?(.+?\s+video)$',t,re.I)
         if m:return 'play_video',.98,{'query':m.group(1).strip(),'player':'youtube','latest':False},'deterministic'
-
-        # A concrete plain "play <name>" request is music by default and uses SimpMusic.
-        # Keep vague/contextual phrases on the semantic/context path instead.
         m=re.match(r'^play\s+(.+)$',t,re.I)
         if m:
-            query=m.group(1).strip()
-            vague={
-                'music','some music','something','something nice','something good',
-                'something i would like','something suitable','another','another one',
-                'another song','something else'
-            }
+            query=m.group(1).strip();vague={'music','some music','something','something nice','something good','something i would like','something suitable','another','another one','another song','something else'}
             if query.lower() not in vague and not re.search(r'\b(?:video|youtube|yt music|youtube music|simpmusic)\b',query,re.I):
                 return 'play_music',.995,{'query':query,'player':'simpmusic'},'deterministic'
         return None,0,{},''
@@ -47,9 +78,6 @@ class FastBrain:
         if low in {'open it again','open again','launch it again'}:
             app=self.context.recent('app')
             if app:return 'open_app',.995,{'app':app},'working_memory'
-        if low in {'send the same message','send same message','message him the same','send it again'}:
-            person=self.context.recent('person');message=self.context.recent('message')
-            if person and message:return 'send_whatsapp',.995,{'contact':person,'message':message},'working_memory'
         if low in {'play another one','play another','another song','play something else'}:
             recent=self.context.recent('music_query')
             if recent:return 'play_music',.995,{'query':recent,'avoid':recent,'player':'simpmusic'},'working_memory'
@@ -83,7 +111,8 @@ class FastBrain:
         return None,0
 
     def route(self,text):
-        start=time.perf_counter(); skill,conf,args,reason=self._media_intent(text)
+        start=time.perf_counter(); skill,conf,args,reason=self._message_intent(text)
+        if not skill:skill,conf,args,reason=self._media_intent(text)
         if not skill:skill,conf,args,reason=self._followup(text)
         if not skill:
             skill,conf=self._deterministic(text);reason='deterministic' if skill else 'semantic';args={}
