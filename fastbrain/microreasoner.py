@@ -4,9 +4,17 @@ import re
 class MicroReasoner:
     def __init__(self,cfg,registry,context): self.cfg=cfg; self.registry=registry; self.context=context
     def build(self,text,skill,args):
-        plan=[]; low=text.lower()
+        plan=[]; low=' '.join(text.lower().split())
         if skill in {'call_contact','send_whatsapp','send_sms'} and args.get('contact'):
-            resolved,source=self.context.resolve_alias(args['contact']); args['contact']=resolved; plan.append({'op':'resolve_contact','source':source,'value':resolved})
+            pronoun_followup = low in {
+                'call him','call her','call them','phone him','phone her','ring him','ring her',
+                'message him the same','send it again','send the same message','send same message'
+            }
+            if pronoun_followup:
+                resolved=args['contact']; source='working_memory'
+            else:
+                resolved,source=self.context.resolve_alias(args['contact']); args['contact']=resolved
+            plan.append({'op':'resolve_contact','source':source,'value':resolved})
         if skill in {'play_music','choose_music_from_context'}:
             mc=self.context.music_context(); args.setdefault('query',mc.get('preference') or 'music'); args['context']=mc; plan.append({'op':'choose_music','context':mc})
         m=re.search(r'\b(?:and\s+)?(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})\b',low)
