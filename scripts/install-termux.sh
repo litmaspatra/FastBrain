@@ -12,7 +12,9 @@ PY
 HOME_DIR="${FASTBRAIN_HOME:-$HOME/.fastbrain}"
 APP_DIR="$HOME_DIR/app"
 BIN_DIR="$HOME_DIR/bin"
-mkdir -p "$HOME_DIR" "$BIN_DIR"
+HELPER_DIR="$HOME_DIR/helpers"
+mkdir -p "$HOME_DIR" "$BIN_DIR" "$HELPER_DIR"
+chmod 700 "$HELPER_DIR"
 
 rm -rf "$APP_DIR.new"
 mkdir -p "$APP_DIR.new"
@@ -20,7 +22,7 @@ cp -a "$ROOT/fastbrain" "$ROOT/skills" "$APP_DIR.new/"
 rm -rf "$APP_DIR"
 mv "$APP_DIR.new" "$APP_DIR"
 
-# Install FastBrain-owned adapters only. Nothing is written into ~/.hermes.
+# FastBrain-owned adapters. Existing Hermes phone helpers are never modified.
 cp "$ROOT/scripts/hindsight-direct.py" "$BIN_DIR/hindsight-direct.py"
 cp "$ROOT/scripts/fast-media.sh" "$BIN_DIR/fast-media"
 chmod 700 "$BIN_DIR/hindsight-direct.py" "$BIN_DIR/fast-media"
@@ -71,6 +73,15 @@ exec "$PY" -m fastbrain.cli "\$@"
 EOF2
 chmod +x "$HOME_DIR/fastbrain"
 
+# Install only FastBrain's own Hermes skill. No Hermes config or existing skill is edited.
+HERMES_SKILL_DIR="$HOME/.hermes/skills/fastbrain"
+if [ -d "$HOME/.hermes" ] && [ -f "$ROOT/integrations/hermes-fastbrain/SKILL.md" ]; then
+  mkdir -p "$HERMES_SKILL_DIR"
+  cp "$ROOT/integrations/hermes-fastbrain/SKILL.md" "$HERMES_SKILL_DIR/SKILL.md"
+  chmod 600 "$HERMES_SKILL_DIR/SKILL.md"
+  echo "Installed Hermes FastBrain integration skill: $HERMES_SKILL_DIR/SKILL.md"
+fi
+
 echo "Installed safely in $HOME_DIR"
-echo "No pip install was run; no Hermes/OmniRoute/Hindsight/system Python files were modified."
+echo "No pip install was run; no OmniRoute/Hindsight/system Python or existing Hermes helper files were modified."
 echo "Run: $HOME_DIR/fastbrain doctor"
