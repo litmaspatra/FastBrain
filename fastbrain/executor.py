@@ -29,12 +29,17 @@ class Executor:
         return path.is_file() and os.access(path, os.X_OK)
 
     def _resolve_command(self, result, argv):
-        # FastBrain-owned low-latency SimpMusic path for music skills.
-        if result.skill in {"play_music", "choose_music_from_context"}:
-            fast_music = Path.home() / ".fastbrain" / "bin" / "fast-simpmusic"
-            if self._is_executable(fast_music):
+        if result.skill in {"play_music", "choose_music_from_context", "play_video"}:
+            fast_media = Path.home() / ".fastbrain" / "bin" / "fast-media"
+            if self._is_executable(fast_media):
                 query = str(result.arguments.get("query") or "popular songs")
-                return [str(fast_music), query], "fastbrain_simpmusic"
+                if result.skill == "play_video":
+                    mode = "youtube-latest" if result.arguments.get("latest") else "youtube"
+                else:
+                    mode = str(result.arguments.get("player") or "simpmusic")
+                    if mode not in {"simpmusic", "ytmusic"}:
+                        mode = "simpmusic"
+                return [str(fast_media), mode, query], "fastbrain_media"
 
         path = shutil.which(argv[0])
         if path:
@@ -61,8 +66,11 @@ class Executor:
         if skill in {"torch_on", "torch_off", "battery_status", "wifi_status", "set_volume"}:
             return [str(dispatcher), "device", *rest], "phone_dispatcher"
         if skill in {"play_music", "choose_music_from_context"}:
-            query = result.arguments.get("query") or (rest[0] if rest else "music")
+            query = result.arguments.get("query") or (rest[-1] if rest else "music")
             return [str(dispatcher), "play", "music", str(query)], "phone_dispatcher"
+        if skill == "play_video":
+            query = result.arguments.get("query") or (rest[-1] if rest else "video")
+            return [str(dispatcher), "play", "video", str(query)], "phone_dispatcher"
         if skill == "create_reminder":
             return [str(dispatcher), "remind", *rest], "phone_dispatcher"
         if skill == "create_obsidian_note":
@@ -90,21 +98,11 @@ class Executor:
             }
 
         if dry_run:
-            return {
-                "executed": False,
-                "dry_run": True,
-                "command": resolved,
-                "executor_source": source,
-            }
+            return {"executed": False, "dry_run": True, "command": resolved, "executor_source": source}
 
         started = time.perf_counter()
         try:
-            proc = subprocess.run(
-                resolved,
-                timeout=float(skill.get("timeout", 8)),
-                capture_output=True,
-                text=True,
-            )
+            proc = subprocess.run(resolved, timeout=float(skill.get("timeout", 8)), capture_output=True, text=True)
             latency_ms = (time.perf_counter() - started) * 1000
             ok = proc.returncode == 0
             self.experience.record(result.skill, ok, latency_ms)
