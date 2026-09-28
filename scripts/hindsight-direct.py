@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """FastBrain -> Hindsight Lite command adapter.
 
-Reads one JSON object from stdin:
-  {"query":"...", "type":"alias", "subject":"govind", "scope":"communication"}
-
-Runs inside Hermes' own Python environment, initializes HermesMemoryBridge, calls
-hmem_recall, and prints normalized JSON for FastBrain. This file deliberately has
-no FastBrain imports so the two Python environments stay isolated.
+Reads one JSON object from stdin and returns one normalized memory candidate.
+Runs inside Hermes' own Python environment so FastBrain's Python 3.13 runtime
+remains isolated from Hermes/Hindsight dependencies.
 """
 
 from __future__ import annotations
@@ -17,59 +14,60 @@ import sys
 from pathlib import Path
 
 
-def normalize(raw, payload):
-    """Normalize common Hindsight recall shapes to a FastBrain-compatible dict."""
+def _first_result(raw):
     if isinstance(raw, str):
         text = raw.strip()
         if not text:
-            return {}
+            return None
         try:
             raw = json.loads(text)
         except Exception:
-            return {
-                "type": payload.get("type", "memory"),
-                "subject": payload.get("subject", ""),
-                "scope": payload.get("scope", ""),
-                "value": text,
-                "confidence": 0.8,
-                "raw": text,
-            }
+            return {"content": text, "confidence": 0.8}
 
     if isinstance(raw, list):
-        if not raw:
-            return {}
-        raw = raw[0]
+        return raw[0] if raw else None
 
     if isinstance(raw, dict):
         for key in ("result", "memory", "item"):
             if isinstance(raw.get(key), dict):
-                raw = raw[key]
-                break
-        memories = raw.get("memories") if isinstance(raw, dict) else None
-        if isinstance(memories, list) and memories:
-            raw = memories[0]
+                return raw[key]
+        for key in ("results", "memories", "items"):
+            value = raw.get(key)
+            if isinstance(value, list) and value:
+                return value[0]
+        return raw
 
-    if not isinstance(raw, dict):
+    return None
+
+
+def normalize(raw, payload):
+    item = _first_result(raw)
+    if not isinstance(item, dict):
         return {}
 
     value = (
-        raw.get("value")
-        or raw.get("fact")
-        or raw.get("content")
-        or raw.get("text")
-        or raw.get("memory")
+        item.get("value")
+        or item.get("fact")
+        or item.get("content")
+        or item.get("text")
+        or item.get("memory")
     )
     if value is None:
-        # Preserve the object for debugging, but don't claim a usable memory.
         return {"raw": raw}
 
+    confidence = item.get("confidence")
+    if confidence is None:
+        # Hindsight's semantic score is ranking-oriented and can be numerically
+        # small, so do not treat it as confidence. Use a conservative default.
+        confidence = 0.8
+
     return {
-        "type": payload.get("type", raw.get("type", "memory")),
-        "subject": payload.get("subject", raw.get("subject", "")),
-        "scope": payload.get("scope", raw.get("scope", "")),
+        "type": payload.get("type", item.get("type", "memory")),
+        "subject": payload.get("subject", item.get("subject", "")),
+        "scope": payload.get("scope", item.get("scope", "")),
         "value": value,
-        "confidence": raw.get("confidence", raw.get("score", 0.8)),
-        "raw": raw,
+        "confidence": confidence,
+        "raw": item,
     }
 
 
