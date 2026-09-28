@@ -68,6 +68,11 @@ class DB:
             d=dict(r); d['value']=json.loads(d['value']); rows.append(d)
         return rows
 
+    def hot_delete(self, typ: str, subject: str, scope: str='') -> int:
+        cur=self.conn.execute("DELETE FROM memory_hot WHERE type=? AND subject=? AND scope=?",(typ,subject.lower(),scope))
+        self.conn.commit()
+        return int(cur.rowcount or 0)
+
     def work_set(self, kind,key,value):
         self.conn.execute("INSERT INTO working_memory(kind,key,value,updated_at) VALUES(?,?,?,?) ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",(kind,key,json.dumps(value),time.time())); self.conn.commit()
 
