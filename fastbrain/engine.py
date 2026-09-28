@@ -2,10 +2,29 @@ from __future__ import annotations
 import re,time
 from .models import RouteResult
 
-
 class FastBrain:
     def __init__(self,cfg,db,registry,semantic,context,micro,experience):
         self.cfg=cfg;self.db=db;self.registry=registry;self.semantic=semantic;self.context=context;self.micro=micro;self.experience=experience
+
+    def _media_intent(self,text):
+        t=' '.join(text.strip().split()); low=t.lower(); recent=self.context.recent('media_query')
+        if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on (?:yt music|youtube music)',low):
+            if recent:return 'play_music',.995,{'query':recent,'player':'ytmusic'},'working_memory'
+        if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on youtube',low):
+            if recent:return 'play_video',.995,{'query':recent,'player':'youtube','latest':False},'working_memory'
+        if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on simpmusic',low):
+            if recent:return 'play_music',.995,{'query':recent,'player':'simpmusic'},'working_memory'
+        m=re.match(r'^(?:play|show|open|watch)?\s*(?:the\s+)?latest\s+video\s+(?:of|by|from)\s+(.+)$',low,re.I)
+        if m:return 'play_video',.995,{'query':m.group(1).strip(),'player':'youtube','latest':True},'deterministic'
+        m=re.match(r'^play\s+(.+?)\s+on\s+(?:yt music|youtube music)$',t,re.I)
+        if m:return 'play_music',.995,{'query':m.group(1).strip(),'player':'ytmusic'},'deterministic'
+        m=re.match(r'^play\s+(.+?)\s+on\s+simpmusic$',t,re.I)
+        if m:return 'play_music',.995,{'query':m.group(1).strip(),'player':'simpmusic'},'deterministic'
+        m=re.match(r'^(?:play|show|open|watch)\s+(.+?)\s+on\s+youtube$',t,re.I)
+        if m:return 'play_video',.995,{'query':m.group(1).strip(),'player':'youtube','latest':False},'deterministic'
+        m=re.match(r'^(?:play|show|open|watch)\s+(?:the\s+)?(.+?\s+video)$',t,re.I)
+        if m:return 'play_video',.98,{'query':m.group(1).strip(),'player':'youtube','latest':False},'deterministic'
+        return None,0,{},''
 
     def _followup(self,text):
         low=' '.join(text.lower().split())
@@ -20,16 +39,14 @@ class FastBrain:
             if person and message:return 'send_whatsapp',.995,{'contact':person,'message':message},'working_memory'
         if low in {'play another one','play another','another song','play something else'}:
             recent=self.context.recent('music_query')
-            if recent:
-                return 'play_music',.995,{'query':recent,'avoid':recent},'working_memory'
+            if recent:return 'play_music',.995,{'query':recent,'avoid':recent,'player':'simpmusic'},'working_memory'
             return None,0,{},''
         return None,0,{},''
 
     def _extract(self,text,skill):
         t=text.strip(); low=t.lower(); args={}
         if skill=='call_contact':
-            patterns=[r'^(?:please\s+)?(?:call|phone|ring)\s+(.+?)(?:\s+please)?$',r'^(.+?)\s+ko\s+(?:call|phone)(?:\s+laga(?:o|do))?(?:\s+karo)?$']
-            for p in patterns:
+            for p in [r'^(?:please\s+)?(?:call|phone|ring)\s+(.+?)(?:\s+please)?$',r'^(.+?)\s+ko\s+(?:call|phone)(?:\s+laga(?:o|do))?(?:\s+karo)?$']:
                 m=re.match(p,low,re.I)
                 if m:args['contact']=m.group(1).strip();break
         elif skill in {'send_whatsapp','send_sms'}:
@@ -45,8 +62,7 @@ class FastBrain:
         return args
 
     def _deterministic(self,text):
-        low=' '.join(text.lower().split())
-        fixed={'torch on':'torch_on','turn torch on':'torch_on','torch jalao':'torch_on','torch off':'torch_off','turn torch off':'torch_off','torch band karo':'torch_off','battery':'battery_status','battery status':'battery_status','wifi status':'wifi_status','pause music':'pause_music','resume music':'resume_music'}
+        low=' '.join(text.lower().split());fixed={'torch on':'torch_on','turn torch on':'torch_on','torch jalao':'torch_on','torch off':'torch_off','turn torch off':'torch_off','torch band karo':'torch_off','battery':'battery_status','battery status':'battery_status','wifi status':'wifi_status','pause music':'pause_music','resume music':'resume_music'}
         if low in fixed:return fixed[low],.995
         if re.match(r'^(?:open|launch)\s+.+$',low) or re.match(r'^.+\s+(?:kholo|open karo)$',low):return 'open_app',.98
         if re.match(r'^(?:call|phone|ring)\s+.+$',low) or re.match(r'^.+\s+ko\s+(?:call|phone)',low):return 'call_contact',.98
@@ -54,14 +70,14 @@ class FastBrain:
         return None,0
 
     def route(self,text):
-        start=time.perf_counter(); skill,conf,args,reason=self._followup(text)
+        start=time.perf_counter(); skill,conf,args,reason=self._media_intent(text)
+        if not skill:skill,conf,args,reason=self._followup(text)
         if not skill:
-            skill,conf=self._deterministic(text); reason='deterministic' if skill else 'semantic';args={}
+            skill,conf=self._deterministic(text);reason='deterministic' if skill else 'semantic';args={}
         if not skill:
-            domain_guess,d,_=self.semantic.route(text);skill,conf=d.choice,d.confidence
+            _,d,_=self.semantic.route(text);skill,conf=d.choice,d.confidence
         s=self.registry.get(skill) if skill else None
-        if not s or skill=='normal_hermes':
-            r=RouteResult('hermes',confidence=conf,reason='unknown_or_complex')
+        if not s or skill=='normal_hermes':r=RouteResult('hermes',confidence=conf,reason='unknown_or_complex')
         else:
             if not args:args=self._extract(text,skill)
             needs=s.get('arguments',{})
@@ -70,11 +86,9 @@ class FastBrain:
                 if recent:args['contact']=recent;reason='working_memory'
             args,plan=self.micro.build(text,skill,args)
             if reason=='working_memory':plan=[{'op':'resolve_followup','source':'working_memory'}]+list(plan or [])
-            required=[k for k,v in needs.items() if v.get('required')]
-            missing=[x for x in required if not args.get(x)]
-            risk=s.get('risk','low'); threshold=max(self.cfg.execute_threshold,0.96 if risk=='medium' else self.cfg.execute_threshold)
-            if missing:
-                r=RouteResult('hermes',s.get('category','unknown'),skill,args,conf,'missing_arguments:'+','.join(missing),plan=plan)
+            required=[k for k,v in needs.items() if v.get('required')];missing=[x for x in required if not args.get(x)]
+            risk=s.get('risk','low');threshold=max(self.cfg.execute_threshold,0.96 if risk=='medium' else self.cfg.execute_threshold)
+            if missing:r=RouteResult('hermes',s.get('category','unknown'),skill,args,conf,'missing_arguments:'+','.join(missing),plan=plan)
             elif conf>=threshold:
                 src='none'
                 if plan:
@@ -82,7 +96,6 @@ class FastBrain:
                         if p.get('source') and p['source']!='none':src=p['source'];break
                     if src=='none' and args.get('context',{}).get('source'):src=args['context']['source']
                 r=RouteResult('local',s.get('category','unknown'),skill,args,conf,reason,src,plan)
-            elif conf>=self.cfg.context_threshold:
-                r=RouteResult('hermes',s.get('category','unknown'),skill,args,conf,'confidence_needs_context',plan=plan)
+            elif conf>=self.cfg.context_threshold:r=RouteResult('hermes',s.get('category','unknown'),skill,args,conf,'confidence_needs_context',plan=plan)
             else:r=RouteResult('hermes',s.get('category','unknown'),skill,args,conf,'low_confidence',plan=plan)
-        r.latency_ms=(time.perf_counter()-start)*1000; self.db.record_route(text,r); return r
+        r.latency_ms=(time.perf_counter()-start)*1000;self.db.record_route(text,r);return r
