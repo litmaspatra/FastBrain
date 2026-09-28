@@ -59,6 +59,11 @@ def main():
     cache.add_argument("value")
     cache.add_argument("--scope", default="")
 
+    cache_delete = sub.add_parser("cache-delete")
+    cache_delete.add_argument("type")
+    cache_delete.add_argument("subject")
+    cache_delete.add_argument("--scope", default="")
+
     sub.add_parser("skills")
     sub.add_parser("stats")
 
@@ -105,6 +110,11 @@ def main():
             }
         )
         print("OK")
+        return 0
+
+    if args.cmd == "cache-delete":
+        deleted = stack["db"].hot_delete(args.type, args.subject, args.scope)
+        print(json.dumps({"deleted": deleted, "type": args.type, "subject": args.subject, "scope": args.scope}, indent=2))
         return 0
 
     if args.cmd == "memory-debug":
