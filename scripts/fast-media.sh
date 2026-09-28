@@ -13,22 +13,18 @@ fi
 case "$MODE" in
   simpmusic)
     PACKAGE="com.maxrave.simpmusic"
-    SEARCH="ytsearch1"
     KIND="music"
     ;;
   ytmusic)
     PACKAGE="app.morphe.android.apps.youtube.music"
-    SEARCH="ytsearch1"
     KIND="music"
     ;;
   youtube)
     PACKAGE="app.morphe.android.youtube"
-    SEARCH="ytsearch1"
     KIND="video"
     ;;
   youtube-latest)
     PACKAGE="app.morphe.android.youtube"
-    SEARCH="ytsearchdate1"
     KIND="video"
     ;;
   *)
@@ -37,12 +33,42 @@ case "$MODE" in
     ;;
 esac
 
-VIDEO_ID="$(timeout 7s yt-dlp \
-  --flat-playlist \
-  --playlist-end 1 \
-  --print '%(id)s' \
-  "$SEARCH:$QUERY" \
-  --no-warnings 2>/dev/null | head -n1)"
+if [ "$MODE" = "youtube-latest" ]; then
+  # ytsearchdate is not supported consistently across yt-dlp builds.
+  # Fetch a small flat result set, then pick the newest dated result locally.
+  SEARCH_JSON="$(timeout 8s yt-dlp \
+    --flat-playlist \
+    --dump-single-json \
+    "ytsearch10:$QUERY" \
+    --no-warnings 2>/dev/null || true)"
+
+  VIDEO_ID="$(printf '%s' "$SEARCH_JSON" | python3.13 -c '
+import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+entries=data.get("entries") or []
+def key(e):
+    ts=e.get("timestamp") or e.get("release_timestamp") or 0
+    if ts:
+        return (1, float(ts))
+    d=(e.get("upload_date") or e.get("release_date") or "").replace("-","")
+    try: return (1, float(d))
+    except Exception: return (0, 0)
+dated=[e for e in entries if e and (e.get("timestamp") or e.get("release_timestamp") or e.get("upload_date") or e.get("release_date"))]
+choice=max(dated,key=key) if dated else (entries[0] if entries else None)
+if choice:
+    print(choice.get("id") or "")
+' 2>/dev/null)"
+else
+  VIDEO_ID="$(timeout 7s yt-dlp \
+    --flat-playlist \
+    --playlist-end 1 \
+    --print '%(id)s' \
+    "ytsearch1:$QUERY" \
+    --no-warnings 2>/dev/null | head -n1)"
+fi
 
 if [ -z "$VIDEO_ID" ]; then
   echo 'ERROR: Fast media search returned no result.' >&2
