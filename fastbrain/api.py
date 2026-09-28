@@ -22,6 +22,12 @@ class Handler(BaseHTTPRequestHandler):
             r=self.stack['engine'].route(b.get('text',''));return self._json(200,r.to_dict())
         if self.path=='/v1/context':
             self.stack['memory'].project(b);return self._json(200,{'ok':True})
+        if self.path=='/v1/skills':
+            try:
+                self.stack['learner'].learn(b)
+                return self._json(200,{'ok':True,'skill':b})
+            except Exception as e:
+                return self._json(400,{'error':str(e)})
         if self.path=='/v1/skills/test':
             r=self.stack['engine'].route(b.get('text',''));return self._json(200,r.to_dict())
         if self.path=='/v1/learn':
