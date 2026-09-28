@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import subprocess
 import time
+from difflib import SequenceMatcher
 from pathlib import Path
 
 
@@ -28,6 +31,88 @@ class Executor:
     @staticmethod
     def _is_executable(path: Path) -> bool:
         return path.is_file() and os.access(path, os.X_OK)
+
+    @staticmethod
+    def _norm_contact(value: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", str(value).lower()))
+
+    @classmethod
+    def _contact_similarity(cls, a: str, b: str) -> float:
+        na, nb = cls._norm_contact(a), cls._norm_contact(b)
+        ca, cb = na.replace(" ", ""), nb.replace(" ", "")
+        return max(SequenceMatcher(None, na, nb).ratio(), SequenceMatcher(None, ca, cb).ratio())
+
+    def _contact_guard(self, result):
+        """Prevent calls/messages to a guessed contact after ASR mistakes.
+
+        Hot aliases and successful working-memory contacts are already explicit mappings.
+        Literal names must exactly match a device contact before execution. Fuzzy matches
+        are suggestions only and never auto-execute.
+        """
+        if result.skill not in {"call_contact", "send_whatsapp", "send_sms"}:
+            return {"ok": True, "status": "not_applicable"}
+
+        contact = str(result.arguments.get("contact") or "").strip()
+        if not contact:
+            return {"ok": False, "status": "missing_contact"}
+
+        if result.context_source in {"hot", "working_memory"}:
+            return {"ok": True, "status": "trusted_context", "contact": contact}
+
+        tool = shutil.which("termux-contact-list")
+        if not tool:
+            return {
+                "ok": False,
+                "status": "contact_verification_unavailable",
+                "contact": contact,
+            }
+
+        try:
+            proc = subprocess.run([tool], timeout=4, capture_output=True, text=True)
+            if proc.returncode != 0 or not proc.stdout.strip():
+                return {
+                    "ok": False,
+                    "status": "contact_verification_failed",
+                    "contact": contact,
+                }
+            contacts = json.loads(proc.stdout)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": "contact_verification_failed",
+                "contact": contact,
+                "error": str(exc),
+            }
+
+        names = []
+        for item in contacts if isinstance(contacts, list) else []:
+            name = str(item.get("name", "")).strip() if isinstance(item, dict) else ""
+            if name:
+                names.append(name)
+
+        q = self._norm_contact(contact)
+        exact = [name for name in names if self._norm_contact(name) == q]
+        if exact:
+            result.arguments["contact"] = exact[0]
+            return {"ok": True, "status": "exact_contact", "contact": exact[0]}
+
+        ranked = sorted(
+            ((self._contact_similarity(contact, name), name) for name in names),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+        suggestions = [
+            {"name": name, "score": round(score, 3)}
+            for score, name in ranked[:3]
+            if score >= 0.45
+        ]
+        return {
+            "ok": False,
+            "status": "contact_uncertain",
+            "heard": contact,
+            "suggestions": suggestions,
+            "needs_confirmation": True,
+        }
 
     def _resolve_command(self, result, argv):
         if result.skill in {"play_music", "choose_music_from_context", "play_video"}:
@@ -92,6 +177,15 @@ class Executor:
         if result.route != "local":
             return {"executed": False, "route": result.route, "reason": result.reason}
 
+        contact_guard = self._contact_guard(result)
+        if not contact_guard.get("ok"):
+            return {
+                "executed": False,
+                "success": False,
+                "error": "contact_uncertain",
+                "contact_guard": contact_guard,
+            }
+
         skill = self.registry.get(result.skill)
         argv = self.registry.render_command(skill, result.arguments)
         if not argv:
@@ -108,7 +202,13 @@ class Executor:
             }
 
         if dry_run:
-            return {"executed": False, "dry_run": True, "command": resolved, "executor_source": source}
+            return {
+                "executed": False,
+                "dry_run": True,
+                "command": resolved,
+                "executor_source": source,
+                "contact_guard": contact_guard,
+            }
 
         started = time.perf_counter()
         try:
@@ -127,6 +227,7 @@ class Executor:
                 "command": resolved,
                 "stdout": proc.stdout[-1000:],
                 "stderr": proc.stderr[-1000:],
+                "contact_guard": contact_guard,
             }
         except Exception as exc:
             latency_ms = (time.perf_counter() - started) * 1000
@@ -138,4 +239,5 @@ class Executor:
                 "executor_source": source,
                 "command": resolved,
                 "error": str(exc),
+                "contact_guard": contact_guard,
             }
