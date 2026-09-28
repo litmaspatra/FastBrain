@@ -125,13 +125,21 @@ A workflow qualifies for observation only when all of these are true:
 
 Do not observe one-off research, open-ended reasoning, destructive actions, payments, account/security changes, deletes, publishing, or other high-risk workflows.
 
-For a qualifying workflow, create a candidate JSON definition in a temporary file and record the successful observation:
+Prefer inline JSON for observations so Hermes does not depend on temporary files:
+
+```bash
+~/.fastbrain/fastbrain learn-observe "USER TRIGGER PHRASE" --json '{"id":"candidate_id","category":"apps","examples":["USER TRIGGER PHRASE"],"risk":"low","executor":{"command":"helper-name"}}'
+```
+
+A JSON file is still supported when useful:
 
 ```bash
 ~/.fastbrain/fastbrain learn-observe "USER TRIGGER PHRASE" /path/to/candidate.json
 ```
 
 The candidate definition uses the same fields as a learned skill: `id`, `category`, `examples`, `executor`, `risk`, and optional `timeout`/`arguments`.
+
+If an observation definition is missing or invalid, fix the candidate definition and retry. Do not create placeholder filenames such as `candidate.json` unless Hermes actually created that file first.
 
 FastBrain deliberately does not auto-promote after the first observation. Low-risk candidates become `eligible` only after at least two successful observations. Medium-risk candidates remain manual-promotion candidates even after repeated success. High-risk candidates are rejected.
 
