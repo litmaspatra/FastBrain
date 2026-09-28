@@ -82,5 +82,12 @@ class DB:
             d=dict(r); d['value']=json.loads(d['value']); out.append(d)
         return out
 
+    def work_delete(self,kind,key=None):
+        if key is None:
+            cur=self.conn.execute("DELETE FROM working_memory WHERE kind=?",(kind,))
+        else:
+            cur=self.conn.execute("DELETE FROM working_memory WHERE kind=? AND key=?",(kind,key))
+        self.conn.commit(); return int(cur.rowcount or 0)
+
     def record_route(self, text, result):
         self.conn.execute("INSERT INTO route_log(input,domain,skill,confidence,memory_source,latency_ms,route,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)",(text,result.domain,result.skill,result.confidence,result.context_source,result.latency_ms,result.route,result.reason,time.time())); self.conn.commit()
