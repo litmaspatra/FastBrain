@@ -6,19 +6,36 @@ class FastBrain:
     def __init__(self,cfg,db,registry,semantic,context,micro,experience):
         self.cfg=cfg;self.db=db;self.registry=registry;self.semantic=semantic;self.context=context;self.micro=micro;self.experience=experience
 
+    def _confirmation_intent(self,text):
+        low=' '.join(text.lower().strip().split())
+        pending=self.context.pending_confirmation()
+        if not pending:return None,0,{},''
+        yes={'yes','yeah','yep','correct','right','haan','ha','han','yes do it','haan karo','yes call','yes send'}
+        no={'no','nope','nah','nahi','nahin','cancel','cancel it'}
+        if low in yes:
+            args=dict(pending.get('arguments') or {})
+            args['contact']=pending.get('suggestion') or args.get('contact')
+            return pending.get('skill'),.995,args,'working_memory'
+        if low in no:
+            self.context.clear_pending_confirmation()
+            return 'normal_hermes',1.0,{},'confirmation_rejected'
+        m=re.match(r'^(?:no|nope|nah|nahi|nahin)[,\s]+(.+)$',text.strip(),re.I)
+        if m:
+            args=dict(pending.get('arguments') or {})
+            args['contact']=m.group(1).strip()
+            self.context.clear_pending_confirmation()
+            return pending.get('skill'),.995,args,'deterministic'
+        return None,0,{},''
+
     def _message_intent(self,text):
         t=' '.join(text.strip().split());low=t.lower()
         recent_person=self.context.recent('person');recent_message=self.context.recent('message')
-
-        # Explicit SMS only. SMS is never selected implicitly.
         m=re.match(r'^(?:sms|text)\s+([^\s]+)\s+(.+)$',t,re.I)
         if m:return 'send_sms',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
         m=re.match(r'^send\s+sms\s+to\s+([^\s]+)\s+(.+)$',t,re.I)
         if m:return 'send_sms',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
         if low in {'send the same message by sms','send same message by sms','send it by sms'}:
             if recent_person and recent_message:return 'send_sms',.995,{'contact':recent_person,'message':recent_message},'working_memory'
-
-        # WhatsApp is the default messaging channel.
         m=re.match(r'^(?:message|whatsapp)\s+([^\s]+)\s+(.+)$',t,re.I)
         if m:return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
         m=re.match(r'^send\s+([^\s]+)\s+(.+)$',t,re.I)
@@ -27,13 +44,9 @@ class FastBrain:
         m=re.match(r'^send\s+(.+?)\s+to\s+([^\s]+)$',t,re.I)
         if m and m.group(1).lower() not in {'it','that','this','the same message','same message'}:
             return 'send_whatsapp',.995,{'contact':m.group(2).strip(),'message':m.group(1).strip()},'deterministic'
-
-        # New text to the most recent person.
         m=re.match(r'^(?:message|send|whatsapp)\s+(?:him|her|them)\s+(.+)$',t,re.I)
         if m and recent_person:
             return 'send_whatsapp',.995,{'contact':recent_person,'message':m.group(1).strip()},'working_memory'
-
-        # Reuse the last successfully sent message.
         if low in {'send the same message','send same message','message him the same','send it again','send it to him','send it to her','send it to them','send that to him','send that to her'}:
             if recent_person and recent_message:
                 return 'send_whatsapp',.995,{'contact':recent_person,'message':recent_message},'working_memory'
@@ -111,7 +124,8 @@ class FastBrain:
         return None,0
 
     def route(self,text):
-        start=time.perf_counter(); skill,conf,args,reason=self._message_intent(text)
+        start=time.perf_counter(); skill,conf,args,reason=self._confirmation_intent(text)
+        if not skill:skill,conf,args,reason=self._message_intent(text)
         if not skill:skill,conf,args,reason=self._media_intent(text)
         if not skill:skill,conf,args,reason=self._followup(text)
         if not skill:
@@ -119,7 +133,7 @@ class FastBrain:
         if not skill:
             _,d,_=self.semantic.route(text);skill,conf=d.choice,d.confidence
         s=self.registry.get(skill) if skill else None
-        if not s or skill=='normal_hermes':r=RouteResult('hermes',confidence=conf,reason='unknown_or_complex')
+        if not s or skill=='normal_hermes':r=RouteResult('hermes',confidence=conf,reason=reason if skill=='normal_hermes' else 'unknown_or_complex')
         else:
             if not args:args=self._extract(text,skill)
             needs=s.get('arguments',{})
