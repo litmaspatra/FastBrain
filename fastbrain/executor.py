@@ -29,6 +29,13 @@ class Executor:
         return path.is_file() and os.access(path, os.X_OK)
 
     def _resolve_command(self, result, argv):
+        # FastBrain-owned low-latency SimpMusic path for music skills.
+        if result.skill in {"play_music", "choose_music_from_context"}:
+            fast_music = Path.home() / ".fastbrain" / "bin" / "fast-simpmusic"
+            if self._is_executable(fast_music):
+                query = str(result.arguments.get("query") or "popular songs")
+                return [str(fast_music), query], "fastbrain_simpmusic"
+
         path = shutil.which(argv[0])
         if path:
             return [path, *argv[1:]], "path"
