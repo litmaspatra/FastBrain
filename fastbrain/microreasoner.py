@@ -8,8 +8,12 @@ class MicroReasoner:
         if skill in {'call_contact','send_whatsapp','send_sms'} and args.get('contact'):
             pronoun_followup = low in {
                 'call him','call her','call them','phone him','phone her','ring him','ring her',
-                'message him the same','send it again','send the same message','send same message'
-            }
+                'message him the same','send it again','send the same message','send same message',
+                'send it to him','send it to her','send it to them','send that to him','send that to her',
+                'send the same message by sms','send same message by sms','send it by sms'
+            } or bool(re.match(r'^send\s+(?:the\s+)?same\s+message\s+to\s+\S+$',low)) \
+              or bool(re.match(r'^send\s+(?:it|that|this)\s+to\s+\S+$',low)) \
+              or bool(re.match(r'^(?:message|send|whatsapp)\s+(?:him|her|them)\s+.+$',low))
             if pronoun_followup:
                 resolved=args['contact']; source='working_memory'
             else:
