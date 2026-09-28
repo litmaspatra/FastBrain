@@ -64,6 +64,9 @@ def main():
     cache_delete.add_argument("subject")
     cache_delete.add_argument("--scope", default="")
 
+    skill_add = sub.add_parser("skill-add")
+    skill_add.add_argument("json_file")
+
     sub.add_parser("skills")
     sub.add_parser("stats")
 
@@ -117,6 +120,13 @@ def main():
         print(json.dumps({"deleted": deleted, "type": args.type, "subject": args.subject, "scope": args.scope}, indent=2))
         return 0
 
+    if args.cmd == "skill-add":
+        with open(args.json_file, "r", encoding="utf-8") as f:
+            definition = json.load(f)
+        learned = stack["learner"].learn(definition)
+        print(json.dumps({"ok": True, "skill": learned}, indent=2, ensure_ascii=False))
+        return 0
+
     if args.cmd == "memory-debug":
         payload = stack["memory"].debug_direct(args.type, args.subject, args.scope)
         print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -125,23 +135,13 @@ def main():
     if args.cmd == "memory-probe":
         memory = stack["memory"]
         direct = memory.lookup_direct(args.type, args.subject, args.scope)
-        payload = {
-            "type": args.type,
-            "subject": args.subject,
-            "scope": args.scope,
-            "direct": direct,
-            "promoted": False,
-        }
+        payload = {"type": args.type,"subject": args.subject,"scope": args.scope,"direct": direct,"promoted": False}
         if args.promote and direct:
-            promoted, reason = memory.promote_direct_result(
-                args.type, args.subject, args.scope, direct
-            )
+            promoted, reason = memory.promote_direct_result(args.type, args.subject, args.scope, direct)
             payload["promoted"] = promoted
             payload["promotion_reason"] = reason
             if promoted:
-                payload["hot_after"] = memory.lookup_hot(
-                    args.type, args.subject, args.scope
-                )
+                payload["hot_after"] = memory.lookup_hot(args.type, args.subject, args.scope)
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0 if direct else 3
 
@@ -149,69 +149,30 @@ def main():
         memory = stack["memory"]
         raw = args.subject.strip() if args.subject else uuid.uuid4().hex[:12]
         subject = "__fastbrain_benchmark__" + raw
-        memory.project(
-            {
-                "type": "alias",
-                "subject": subject,
-                "value": "benchmark-value",
-                "scope": "benchmark",
-                "confidence": 1,
-            }
-        )
-
-        hot_times = []
-        direct_times = []
-        direct_configured = bool(
-            stack["config"].hindsight_url or stack["config"].hindsight_cmd
-        )
+        memory.project({"type":"alias","subject":subject,"value":"benchmark-value","scope":"benchmark","confidence":1})
+        hot_times=[];direct_times=[]
+        direct_configured=bool(stack["config"].hindsight_url or stack["config"].hindsight_cmd)
         for _ in range(args.iterations):
-            started = time.perf_counter()
-            memory.lookup_hot("alias", subject, "benchmark")
-            hot_times.append((time.perf_counter() - started) * 1000)
-
+            started=time.perf_counter();memory.lookup_hot("alias",subject,"benchmark");hot_times.append((time.perf_counter()-started)*1000)
             if direct_configured:
-                started = time.perf_counter()
-                memory.lookup_direct("alias", subject, "benchmark")
-                direct_times.append((time.perf_counter() - started) * 1000)
-
-        payload = {
-            "subject": subject,
-            "hot": _summary(hot_times),
-            "direct": _summary(direct_times),
-            "direct_configured": direct_configured,
-        }
-        if not direct_configured:
-            payload["recommendation"] = "configure direct Hindsight before comparing"
-        elif statistics.median(direct_times) >= 1000:
-            payload["recommendation"] = "hybrid: hot cache first, Hindsight on miss"
-        elif statistics.median(direct_times) < 500:
-            payload["recommendation"] = "direct is fast enough; hybrid still reduces repeated work"
-        else:
-            payload["recommendation"] = "hybrid recommended"
-        print(json.dumps(payload, indent=2))
-        return 0
+                started=time.perf_counter();memory.lookup_direct("alias",subject,"benchmark");direct_times.append((time.perf_counter()-started)*1000)
+        payload={"subject":subject,"hot":_summary(hot_times),"direct":_summary(direct_times),"direct_configured":direct_configured}
+        if not direct_configured:payload["recommendation"]="configure direct Hindsight before comparing"
+        elif statistics.median(direct_times)>=1000:payload["recommendation"]="hybrid: hot cache first, Hindsight on miss"
+        elif statistics.median(direct_times)<500:payload["recommendation"]="direct is fast enough; hybrid still reduces repeated work"
+        else:payload["recommendation"]="hybrid recommended"
+        print(json.dumps(payload,indent=2));return 0
 
     if args.cmd == "serve":
-        serve(args.host, args.port)
-        return 0
-
+        serve(args.host, args.port);return 0
     if args.cmd == "skills":
-        print(json.dumps(stack["registry"].all(), indent=2))
-        return 0
-
+        print(json.dumps(stack["registry"].all(), indent=2));return 0
     if args.cmd == "stats":
-        print(json.dumps(stack["experience"].stats(), indent=2))
-        return 0
-
+        print(json.dumps(stack["experience"].stats(), indent=2));return 0
     if args.cmd == "export-training":
         from .training import export_jsonl
-
-        count = export_jsonl(stack, args.output)
-        print(json.dumps({"output": args.output, "examples": count}, indent=2))
-        return 0
-
+        count=export_jsonl(stack,args.output);print(json.dumps({"output":args.output,"examples":count},indent=2));return 0
     return 2
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
