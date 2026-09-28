@@ -8,7 +8,7 @@ if [ -z "$QUERY" ]; then
 fi
 
 # Lightweight YouTube search: flat playlist avoids fetching full video metadata.
-URL="$((timeout 7s yt-dlp --flat-playlist --playlist-end 1 --print '%(url)s' "ytsearch1:$QUERY" 2>/dev/null || true) | head -n1)"
+URL="$( (timeout 7s yt-dlp --flat-playlist --playlist-end 1 --print '%(url)s' "ytsearch1:$QUERY" 2>/dev/null || true) | head -n1 )"
 
 if [ -z "$URL" ]; then
   echo 'ERROR: Fast music search returned no result.' >&2
