@@ -22,7 +22,8 @@ mv "$APP_DIR.new" "$APP_DIR"
 
 # Install FastBrain-owned adapters only. Nothing is written into ~/.hermes.
 cp "$ROOT/scripts/hindsight-direct.py" "$BIN_DIR/hindsight-direct.py"
-chmod 700 "$BIN_DIR/hindsight-direct.py"
+cp "$ROOT/scripts/fast-simpmusic.sh" "$BIN_DIR/fast-simpmusic"
+chmod 700 "$BIN_DIR/hindsight-direct.py" "$BIN_DIR/fast-simpmusic"
 
 cat > "$HOME_DIR/fastbrain.env.example" <<'ENV'
 FASTBRAIN_MEMORY_MODE=hybrid
