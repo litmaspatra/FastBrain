@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse,json,platform,statistics,sys,time
+import argparse,json,platform,statistics,sys,time,uuid
 from .app import build
 from .api import serve
 
@@ -7,7 +7,7 @@ def main():
     p=argparse.ArgumentParser(prog='fastbrain');sub=p.add_subparsers(dest='cmd',required=True)
     r=sub.add_parser('route');r.add_argument('text',nargs='+');r.add_argument('--execute',action='store_true');r.add_argument('--dry-run',action='store_true')
     sub.add_parser('doctor')
-    b=sub.add_parser('benchmark-memory');b.add_argument('--iterations',type=int,default=20);b.add_argument('--subject',default='govind')
+    b=sub.add_parser('benchmark-memory');b.add_argument('--iterations',type=int,default=20);b.add_argument('--subject',default='')
     s=sub.add_parser('serve');s.add_argument('--host',default='127.0.0.1');s.add_argument('--port',type=int,default=8766)
     c=sub.add_parser('cache-put');c.add_argument('type');c.add_argument('subject');c.add_argument('value');c.add_argument('--scope',default='')
     sub.add_parser('skills');sub.add_parser('stats');e=sub.add_parser('export-training');e.add_argument('--output',default='fastbrain-training.jsonl')
@@ -23,13 +23,24 @@ def main():
         return 0
     if a.cmd=='cache-put':stack['memory'].project({'type':a.type,'subject':a.subject,'value':a.value,'scope':a.scope,'confidence':1,'priority':90});print('OK');return 0
     if a.cmd=='benchmark-memory':
-        mem=stack['memory']; mem.project({'type':'alias','subject':a.subject,'value':'benchmark-value','scope':'communication','confidence':1})
+        mem=stack['memory']
+        # Never benchmark against a real user key. A caller-supplied subject is namespaced;
+        # otherwise create a random synthetic key so benchmarks cannot overwrite memories.
+        raw=a.subject.strip() if a.subject else uuid.uuid4().hex[:12]
+        subject='__fastbrain_benchmark__'+raw
+        mem.project({'type':'alias','subject':subject,'value':'benchmark-value','scope':'benchmark','confidence':1})
         hot=[];direct=[]
+        direct_configured=bool(stack['config'].hindsight_url or stack['config'].hindsight_cmd)
         for _ in range(a.iterations):
-            t=time.perf_counter();mem.lookup_hot('alias',a.subject,'communication');hot.append((time.perf_counter()-t)*1000)
-            t=time.perf_counter();mem.lookup_direct('alias',a.subject,'communication');direct.append((time.perf_counter()-t)*1000)
-        def summary(x):return {'median_ms':statistics.median(x),'p95_ms':sorted(x)[max(0,int(len(x)*.95)-1)],'mean_ms':statistics.mean(x)}
-        print(json.dumps({'hot':summary(hot),'direct':summary(direct),'direct_configured':bool(stack['config'].hindsight_url or stack['config'].hindsight_cmd),'recommendation':'measure on device; prefer direct if consistently <500ms, hot if >=1000ms, otherwise hybrid'},indent=2));return 0
+            t=time.perf_counter();mem.lookup_hot('alias',subject,'benchmark');hot.append((time.perf_counter()-t)*1000)
+            if direct_configured:
+                t=time.perf_counter();mem.lookup_direct('alias',subject,'benchmark');direct.append((time.perf_counter()-t)*1000)
+        def summary(x):
+            if not x:return None
+            return {'median_ms':statistics.median(x),'p95_ms':sorted(x)[max(0,int(len(x)*.95)-1)],'mean_ms':statistics.mean(x)}
+        payload={'subject':subject,'hot':summary(hot),'direct':summary(direct),'direct_configured':direct_configured}
+        payload['recommendation']='configure direct Hindsight before comparing' if not direct_configured else 'prefer direct if consistently <500ms, hot if >=1000ms, otherwise hybrid'
+        print(json.dumps(payload,indent=2));return 0
     if a.cmd=='serve':serve(a.host,a.port);return 0
     if a.cmd=='skills':print(json.dumps(stack['registry'].all(),indent=2));return 0
     if a.cmd=='stats':print(json.dumps(stack['experience'].stats(),indent=2));return 0
