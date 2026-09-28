@@ -17,10 +17,10 @@ class MicroReasoner:
             plan.append({'op':'resolve_contact','source':source,'value':resolved})
         if skill in {'play_music','choose_music_from_context'}:
             mc=self.context.music_context()
-            # find-and-play behaves best with a concrete search phrase, not bare "music".
             args.setdefault('query',mc.get('preference') or 'popular songs')
+            args.setdefault('player','simpmusic')
             args['context']=mc
-            plan.append({'op':'choose_music','context':mc})
+            plan.append({'op':'choose_music','context':mc,'player':args['player']})
         m=re.search(r'\b(?:and\s+)?(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})\b',low)
         if m and skill in {'play_music','choose_music_from_context'}:
             plan.append({'skill':'set_volume','arguments':{'level':max(0,min(100,int(m.group(1))))}})
