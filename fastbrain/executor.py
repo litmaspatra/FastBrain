@@ -41,6 +41,16 @@ class Executor:
                         mode = "simpmusic"
                 return [str(fast_media), mode, query], "fastbrain_media"
 
+        # Messaging must preserve channel semantics before generic helper lookup.
+        # ~/hermes-phone/bin/send-message is SMS-only; WhatsApp has its own helper.
+        if result.skill in {"send_whatsapp", "send_sms"}:
+            helper_name = "whatsapp-message" if result.skill == "send_whatsapp" else "send-message"
+            contact = str(result.arguments.get("contact") or "")
+            message = str(result.arguments.get("message") or "")
+            for candidate in self._helper_candidates(helper_name):
+                if self._is_executable(candidate):
+                    return [str(candidate), contact, message], "hermes_helper"
+
         path = shutil.which(argv[0])
         if path:
             return [path, *argv[1:]], "path"
@@ -58,9 +68,9 @@ class Executor:
         if skill == "call_contact":
             return [str(dispatcher), "call", *rest], "phone_dispatcher"
         if skill == "send_whatsapp":
-            return [str(dispatcher), "whatsapp", *rest], "phone_dispatcher"
+            return [str(dispatcher), "whatsapp", result.arguments.get("contact", ""), result.arguments.get("message", "")], "phone_dispatcher"
         if skill == "send_sms":
-            return [str(dispatcher), "sms", *rest], "phone_dispatcher"
+            return [str(dispatcher), "sms", result.arguments.get("contact", ""), result.arguments.get("message", "")], "phone_dispatcher"
         if skill == "open_app":
             return [str(dispatcher), "open", *rest], "phone_dispatcher"
         if skill in {"torch_on", "torch_off", "battery_status", "wifi_status", "set_volume"}:
