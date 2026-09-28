@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS learned_skills (
   id TEXT PRIMARY KEY, definition TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
   version INTEGER NOT NULL DEFAULT 1, updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS learning_candidates (
+  id TEXT PRIMARY KEY, phrase TEXT NOT NULL, definition TEXT NOT NULL,
+  observations INTEGER NOT NULL DEFAULT 1, successes INTEGER NOT NULL DEFAULT 1,
+  score REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'candidate',
+  reason TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, updated_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS route_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, input TEXT NOT NULL, domain TEXT,
   skill TEXT, confidence REAL, memory_source TEXT, latency_ms REAL,
