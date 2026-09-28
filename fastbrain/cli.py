@@ -44,6 +44,11 @@ def main():
     probe.add_argument("--scope", default="")
     probe.add_argument("--promote", action="store_true")
 
+    debug = sub.add_parser("memory-debug")
+    debug.add_argument("type")
+    debug.add_argument("subject")
+    debug.add_argument("--scope", default="")
+
     server = sub.add_parser("serve")
     server.add_argument("--host", default="127.0.0.1")
     server.add_argument("--port", type=int, default=8766)
@@ -102,6 +107,11 @@ def main():
         print("OK")
         return 0
 
+    if args.cmd == "memory-debug":
+        payload = stack["memory"].debug_direct(args.type, args.subject, args.scope)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+
     if args.cmd == "memory-probe":
         memory = stack["memory"]
         direct = memory.lookup_direct(args.type, args.subject, args.scope)
@@ -127,7 +137,6 @@ def main():
 
     if args.cmd == "benchmark-memory":
         memory = stack["memory"]
-        # Benchmarks use a synthetic namespace only; real memories are never touched.
         raw = args.subject.strip() if args.subject else uuid.uuid4().hex[:12]
         subject = "__fastbrain_benchmark__" + raw
         memory.project(
