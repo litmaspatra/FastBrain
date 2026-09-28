@@ -43,12 +43,6 @@ class Executor:
         return max(SequenceMatcher(None, na, nb).ratio(), SequenceMatcher(None, ca, cb).ratio())
 
     def _contact_guard(self, result):
-        """Prevent calls/messages to a guessed contact after ASR mistakes.
-
-        Hot aliases and successful working-memory contacts are already explicit mappings.
-        Literal names must exactly match a device contact before execution. Fuzzy matches
-        are suggestions only and never auto-execute.
-        """
         if result.skill not in {"call_contact", "send_whatsapp", "send_sms"}:
             return {"ok": True, "status": "not_applicable"}
 
@@ -61,39 +55,30 @@ class Executor:
 
         tool = shutil.which("termux-contact-list")
         if not tool:
-            return {
-                "ok": False,
-                "status": "contact_verification_unavailable",
-                "contact": contact,
-            }
+            return {"ok": False, "status": "contact_verification_unavailable", "contact": contact}
 
         try:
             proc = subprocess.run([tool], timeout=4, capture_output=True, text=True)
             if proc.returncode != 0 or not proc.stdout.strip():
-                return {
-                    "ok": False,
-                    "status": "contact_verification_failed",
-                    "contact": contact,
-                }
+                return {"ok": False, "status": "contact_verification_failed", "contact": contact}
             contacts = json.loads(proc.stdout)
         except Exception as exc:
-            return {
-                "ok": False,
-                "status": "contact_verification_failed",
-                "contact": contact,
-                "error": str(exc),
-            }
+            return {"ok": False, "status": "contact_verification_failed", "contact": contact, "error": str(exc)}
 
-        names = []
+        unique = {}
         for item in contacts if isinstance(contacts, list) else []:
             name = str(item.get("name", "")).strip() if isinstance(item, dict) else ""
-            if name:
-                names.append(name)
+            key = self._norm_contact(name)
+            if name and key and key not in unique:
+                unique[key] = name
+        names = list(unique.values())
 
         q = self._norm_contact(contact)
         exact = [name for name in names if self._norm_contact(name) == q]
         if exact:
             result.arguments["contact"] = exact[0]
+            if self.context is not None:
+                self.context.clear_pending_confirmation()
             return {"ok": True, "status": "exact_contact", "contact": exact[0]}
 
         ranked = sorted(
@@ -101,17 +86,28 @@ class Executor:
             key=lambda x: x[0],
             reverse=True,
         )
-        suggestions = [
-            {"name": name, "score": round(score, 3)}
-            for score, name in ranked[:3]
-            if score >= 0.45
-        ]
+        suggestions = []
+        for score, name in ranked:
+            if score < 0.45:
+                continue
+            suggestions.append({"name": name, "score": round(score, 3)})
+            if len(suggestions) == 3:
+                break
+
+        if suggestions and self.context is not None:
+            self.context.set_pending_confirmation({
+                "skill": result.skill,
+                "arguments": dict(result.arguments),
+                "heard": contact,
+                "suggestion": suggestions[0]["name"],
+            })
+
         return {
             "ok": False,
             "status": "contact_uncertain",
             "heard": contact,
             "suggestions": suggestions,
-            "needs_confirmation": True,
+            "needs_confirmation": bool(suggestions),
         }
 
     def _resolve_command(self, result, argv):
@@ -217,6 +213,7 @@ class Executor:
             ok = proc.returncode == 0
             self.experience.record(result.skill, ok, latency_ms)
             if ok and self.context is not None:
+                self.context.clear_pending_confirmation()
                 self.context.remember_action(result.skill, result.arguments)
             return {
                 "executed": True,
