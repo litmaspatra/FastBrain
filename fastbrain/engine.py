@@ -24,6 +24,19 @@ class FastBrain:
         if m:return 'play_video',.995,{'query':m.group(1).strip(),'player':'youtube','latest':False},'deterministic'
         m=re.match(r'^(?:play|show|open|watch)\s+(?:the\s+)?(.+?\s+video)$',t,re.I)
         if m:return 'play_video',.98,{'query':m.group(1).strip(),'player':'youtube','latest':False},'deterministic'
+
+        # A concrete plain "play <name>" request is music by default and uses SimpMusic.
+        # Keep vague/contextual phrases on the semantic/context path instead.
+        m=re.match(r'^play\s+(.+)$',t,re.I)
+        if m:
+            query=m.group(1).strip()
+            vague={
+                'music','some music','something','something nice','something good',
+                'something i would like','something suitable','another','another one',
+                'another song','something else'
+            }
+            if query.lower() not in vague and not re.search(r'\b(?:video|youtube|yt music|youtube music|simpmusic)\b',query,re.I):
+                return 'play_music',.995,{'query':query,'player':'simpmusic'},'deterministic'
         return None,0,{},''
 
     def _followup(self,text):
