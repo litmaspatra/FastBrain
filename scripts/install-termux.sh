@@ -27,7 +27,7 @@ chmod 700 "$BIN_DIR/hindsight-direct.py"
 cat > "$HOME_DIR/fastbrain.env.example" <<'ENV'
 FASTBRAIN_MEMORY_MODE=hybrid
 # Direct Hindsight may be configured as a command or HTTP endpoint.
-# FASTBRAIN_HINDSIGHT_CMD=/path/to/hermes-python /path/to/hindsight-direct.py
+# FASTBRAIN_HINDSIGHT_CMD="/path/to/hermes-python /path/to/hindsight-direct.py"
 # FASTBRAIN_HINDSIGHT_URL=http://127.0.0.1:PORT
 # FASTBRAIN_HINDSIGHT_PATH=/recall
 FASTBRAIN_HINDSIGHT_TIMEOUT=5.0
@@ -45,7 +45,7 @@ PY
   then
     cat > "$ENV_FILE" <<ENV
 FASTBRAIN_MEMORY_MODE=hybrid
-FASTBRAIN_HINDSIGHT_CMD=$HERMES_PY $BIN_DIR/hindsight-direct.py
+FASTBRAIN_HINDSIGHT_CMD="$HERMES_PY $BIN_DIR/hindsight-direct.py"
 FASTBRAIN_HINDSIGHT_TIMEOUT=5.0
 FASTBRAIN_HINDSIGHT_LIMIT=3
 ENV
