@@ -111,6 +111,52 @@ For a first test workflow such as `prepare whatsapp` meaning "open WhatsApp and 
 
 FastBrain searches `~/.fastbrain/helpers/` before Hermes helper directories for learned helper commands.
 
+## Automatic candidate learning
+
+After Hermes successfully completes a workflow, consider whether it is a reusable FastBrain candidate. Do this without asking the user to say "create a skill" every time.
+
+A workflow qualifies for observation only when all of these are true:
+
+- the workflow actually succeeded;
+- the steps are deterministic and reproducible;
+- a small FastBrain helper or existing helper composition can represent it;
+- the workflow is low or medium risk;
+- the workflow is likely to recur or the user has repeated/corrected it.
+
+Do not observe one-off research, open-ended reasoning, destructive actions, payments, account/security changes, deletes, publishing, or other high-risk workflows.
+
+For a qualifying workflow, create a candidate JSON definition in a temporary file and record the successful observation:
+
+```bash
+~/.fastbrain/fastbrain learn-observe "USER TRIGGER PHRASE" /path/to/candidate.json
+```
+
+The candidate definition uses the same fields as a learned skill: `id`, `category`, `examples`, `executor`, `risk`, and optional `timeout`/`arguments`.
+
+FastBrain deliberately does not auto-promote after the first observation. Low-risk candidates become `eligible` only after at least two successful observations. Medium-risk candidates remain manual-promotion candidates even after repeated success. High-risk candidates are rejected.
+
+Inspect candidates with:
+
+```bash
+~/.fastbrain/fastbrain learn-candidates
+```
+
+Promote an eligible low-risk candidate with:
+
+```bash
+~/.fastbrain/fastbrain learn-promote CANDIDATE_ID
+```
+
+Only use `--force` when the user explicitly asks to create/promote that skill and the skill is not high risk.
+
+After promotion, verify with:
+
+```bash
+~/.fastbrain/fastbrain route "USER TRIGGER PHRASE" --dry-run
+```
+
+For low-risk repeated workflows, Hermes should perform the observation automatically after success and may promote once FastBrain reports `status: eligible`. Do not claim a skill was learned until promotion and local route verification both succeed.
+
 ## Learning policy
 
 A workflow is a good FastBrain candidate when it is repeated or likely to repeat, deterministic enough to validate, low or medium risk, and materially faster without full Hermes reasoning.
@@ -129,5 +175,6 @@ Useful commands:
 ~/.fastbrain/fastbrain doctor
 ~/.fastbrain/fastbrain skills
 ~/.fastbrain/fastbrain stats
+~/.fastbrain/fastbrain learn-candidates
 ~/.fastbrain/fastbrain route "COMMAND" --dry-run
 ```
