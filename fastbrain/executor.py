@@ -8,19 +8,12 @@ from pathlib import Path
 
 
 class Executor:
-    """Execute FastBrain skills without duplicating the working Hermes Android layer.
+    """Execute FastBrain skills while reusing the working Hermes Android layer."""
 
-    Resolution order:
-      1. command already on PATH
-      2. existing helper under ~/hermes-phone/bin, ~/.hermes/bin, or ~/bin
-      3. the stable ~/hermes-phone/bin/phone dispatcher
-
-    This keeps FastBrain independent while reusing the user's tested Android helpers.
-    """
-
-    def __init__(self, registry, experience):
+    def __init__(self, registry, experience, context=None):
         self.registry = registry
         self.experience = experience
+        self.context = context
 
     @staticmethod
     def _helper_candidates(name: str):
@@ -36,24 +29,20 @@ class Executor:
         return path.is_file() and os.access(path, os.X_OK)
 
     def _resolve_command(self, result, argv):
-        # 1. Normal PATH lookup.
         path = shutil.which(argv[0])
         if path:
             return [path, *argv[1:]], "path"
 
-        # 2. Existing Hermes phone helpers do not need to be on PATH.
         for candidate in self._helper_candidates(argv[0]):
             if self._is_executable(candidate):
                 return [str(candidate), *argv[1:]], "hermes_helper"
 
-        # 3. Prefer the stable dispatcher used by the working Hermes phone stack.
         dispatcher = Path.home() / "hermes-phone" / "bin" / "phone"
         if not self._is_executable(dispatcher):
             return None, None
 
         rest = list(argv[1:])
         skill = result.skill
-
         if skill == "call_contact":
             return [str(dispatcher), "call", *rest], "phone_dispatcher"
         if skill == "send_whatsapp":
@@ -72,7 +61,6 @@ class Executor:
         if skill == "create_obsidian_note":
             text = result.arguments.get("text") or (rest[0] if rest else "")
             return [str(dispatcher), "note", "create", "FastBrain", str(text)], "phone_dispatcher"
-
         return None, None
 
     def execute(self, result, dry_run=False):
@@ -113,6 +101,8 @@ class Executor:
             latency_ms = (time.perf_counter() - started) * 1000
             ok = proc.returncode == 0
             self.experience.record(result.skill, ok, latency_ms)
+            if ok and self.context is not None:
+                self.context.remember_action(result.skill, result.arguments)
             return {
                 "executed": True,
                 "success": ok,
