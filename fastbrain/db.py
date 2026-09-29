@@ -140,6 +140,21 @@ class DB:
             return None, 'simpmusic'
         query=m.group(1).strip()
         player='simpmusic'
+
+        # Historical route_log rows can contain an entire compound command.
+        # Keep only the first music clause before looking for a player suffix so
+        # examples like "play Arijit and then open WhatsApp" become "Arijit".
+        compound_patterns=[
+            r'\s*,\s*(?:after\s+that\s+|next\s+)?(?=(?:open|launch|play|set\s+volume|volume|turn\s+torch|torch\s+(?:on|off)|flashlight\s+(?:on|off))\b)',
+            r'\s+(?:and\s+then|then|after\s+that|next)\s+(?=(?:open|launch|play|set\s+volume|volume|turn\s+torch|torch\s+(?:on|off)|flashlight\s+(?:on|off))\b)',
+            r'\s+and\s+(?=(?:open|launch|set\s+volume|volume|turn\s+torch|torch\s+(?:on|off)|flashlight\s+(?:on|off))\b)',
+        ]
+        for pattern in compound_patterns:
+            parts=re.split(pattern,query,maxsplit=1,flags=re.I)
+            if len(parts)>1:
+                query=parts[0].strip()
+                break
+
         pm=re.search(r'\s+on\s+(?:yt music|youtube music)\s*$', query, re.I)
         if pm:
             query=query[:pm.start()].strip(); player='ytmusic'
