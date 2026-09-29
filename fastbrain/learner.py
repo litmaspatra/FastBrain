@@ -52,6 +52,35 @@ class SkillLearner:
         self.db.conn.commit()
         return {'ok':True,'candidate_id':cid,'status':status,'score':score,'observations':observations,'successes':successes,'reason':why}
 
+    def correct_candidate(self,candidate_id,phrase,definition,wrong='',metadata=None):
+        row=self.db.conn.execute('SELECT * FROM learning_candidates WHERE id=?',(candidate_id,)).fetchone()
+        if not row: raise ValueError('candidate not found')
+        self.learn_validate(definition)
+        old=dict(row); old_definition=json.loads(old['definition'])
+        if definition.get('id') != candidate_id:
+            definition=dict(definition); definition['id']=candidate_id
+        risk=definition.get('risk','low')
+        if risk=='high': raise ValueError('high-risk skills require manual integration')
+        score,_=self._score(definition,True)
+        was_promoted=old['status']=='promoted'
+        status='promoted' if was_promoted else ('eligible' if risk=='low' and old['observations']>=2 and old['successes']>=2 and score>=0.8 else 'candidate')
+        reason='corrected_promoted' if was_promoted else 'corrected'
+        now=time.time()
+        self.db.conn.execute('UPDATE learning_candidates SET phrase=?,definition=?,score=?,status=?,reason=?,updated_at=? WHERE id=?',
+            (phrase,json.dumps(definition,ensure_ascii=False),score,status,reason,now,candidate_id))
+        self.correction(phrase, wrong or json.dumps(old_definition,ensure_ascii=False), json.dumps(definition,ensure_ascii=False), metadata or {'candidate_id':candidate_id})
+        if was_promoted:
+            self.learn(definition)
+        self.db.conn.commit()
+        return {'ok':True,'candidate_id':candidate_id,'status':status,'score':score,'updated_learned_skill':was_promoted,'reason':reason,'definition':definition}
+
+    def learn_validate(self,definition):
+        required={'id','category','examples','executor'}
+        missing=required-set(definition)
+        if missing: raise ValueError('missing: '+','.join(sorted(missing)))
+        if definition.get('risk')=='high': raise ValueError('high-risk skills require manual integration')
+        return True
+
     def candidates(self):
         out=[]
         for r in self.db.conn.execute('SELECT * FROM learning_candidates ORDER BY updated_at DESC'):
