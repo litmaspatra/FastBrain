@@ -10,6 +10,15 @@ def _key(row):
 def export_jsonl(stack, output):
     rows=[]
     registry={s['id']:s for s in stack['registry'].all()}
+    reliability={}
+    for r in stack['db'].conn.execute('SELECT skill,uses,successes,failures,corrections FROM experience'):
+        d=dict(r); uses=int(d.get('uses') or 0); successes=int(d.get('successes') or 0)
+        reliability[d['skill']]={
+            'uses':uses,
+            'successes':successes,
+            'success_rate':(successes/uses if uses else 0.0),
+            'corrections':int(d.get('corrections') or 0),
+        }
 
     # Canonical skill examples remain the cleanest supervised source.
     for s in registry.values():
@@ -24,22 +33,23 @@ def export_jsonl(stack, output):
                 'weight':1.0,
             })
 
-    # Successful local routes capture real user phrasing. Require strong confidence
-    # and known skills so failed/ambiguous routing does not train the classifier.
+    # Route logs alone do not prove execution success. Reuse real user phrasing only
+    # when that skill has demonstrated reliable execution history.
     for r in stack['db'].conn.execute("SELECT input,domain,skill,confidence,route,reason FROM route_log WHERE route='local' AND skill IS NOT NULL ORDER BY id"):
         d=dict(r); skill=d.get('skill')
         if skill not in registry or skill=='normal_hermes':
             continue
-        conf=float(d.get('confidence') or 0.0)
-        if conf < 0.90:
+        conf=float(d.get('confidence') or 0.0); rel=reliability.get(skill,{})
+        if conf < 0.90 or int(rel.get('successes',0)) < 1 or float(rel.get('success_rate',0.0)) < 0.70:
             continue
         rows.append({
             'text':d['input'],
             'domain':d.get('domain') or registry[skill].get('category','unknown'),
             'skill':skill,
-            'source':'successful_route',
-            'weight':round(min(1.0,max(0.5,conf)),3),
+            'source':'trusted_route_history',
+            'weight':round(min(1.0,max(0.5,conf*float(rel.get('success_rate',0.0)))),3),
             'reason':d.get('reason'),
+            'execution_success_rate':round(float(rel.get('success_rate',0.0)),3),
         })
 
     # Corrections are high-value examples. If metadata or corrected JSON identifies
