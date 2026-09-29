@@ -1,5 +1,6 @@
 from __future__ import annotations
-import json, sqlite3, time
+import json, re, sqlite3, time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,55 @@ class DB:
         for r in self.conn.execute(q,(int(limit),)):
             rows.append(dict(r))
         return rows
+
+    @staticmethod
+    def _explicit_music_query(text):
+        text=' '.join(str(text or '').strip().split())
+        m=re.match(r'^play\s+(.+)$', text, re.I)
+        if not m:
+            return None, 'simpmusic'
+        query=m.group(1).strip()
+        player='simpmusic'
+        pm=re.search(r'\s+on\s+(?:yt music|youtube music)\s*$', query, re.I)
+        if pm:
+            query=query[:pm.start()].strip(); player='ytmusic'
+        else:
+            pm=re.search(r'\s+on\s+simpmusic\s*$', query, re.I)
+            if pm: query=query[:pm.start()].strip()
+        query=re.sub(r'\s+(?:and\s+)?(?:then\s+)?(?:set\s+)?volume(?:\s+to)?\s+\d{1,3}\s*$', '', query, flags=re.I).strip()
+        vague={
+            'music','some music','something','something nice','something good',
+            'something i would like','something suitable','another','another one',
+            'another song','something else','popular songs'
+        }
+        if not query or query.lower() in vague:
+            return None, player
+        return query, player
+
+    def music_request_history(self, limit=20, scan_limit=500):
+        """Infer what the user repeatedly asks to hear from existing route history.
+
+        This is preference evidence, not proof of successful playback. Successful
+        music_history rows remain higher-confidence evidence in ContextEngine.
+        """
+        agg=defaultdict(lambda:{'requests':0,'last_requested_at':0.0,'query':None,'player':'simpmusic'})
+        rows=self.conn.execute("""SELECT input,created_at FROM route_log
+            WHERE skill IN ('play_music','choose_music_from_context')
+            ORDER BY id DESC LIMIT ?""",(int(scan_limit),)).fetchall()
+        for row in rows:
+            query,player=self._explicit_music_query(row['input'])
+            if not query:
+                continue
+            key=(query.lower(),player)
+            item=agg[key]
+            item['requests']+=1
+            if float(row['created_at'] or 0)>item['last_requested_at']:
+                item['last_requested_at']=float(row['created_at'] or 0)
+                item['query']=query
+                item['player']=player
+        out=list(agg.values())
+        out.sort(key=lambda x:(x['requests'],x['last_requested_at']),reverse=True)
+        return out[:int(limit)]
 
     def record_route(self, text, result):
         self.conn.execute("INSERT INTO route_log(input,domain,skill,confidence,memory_source,latency_ms,route,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)",(text,result.domain,result.skill,result.confidence,result.context_source,result.latency_ms,result.route,result.reason,time.time())); self.conn.commit()
