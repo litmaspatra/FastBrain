@@ -84,7 +84,7 @@ class MicroReasoner:
             if m:
                 word=m.group(1).lower(); threshold=max(0,min(100,int(m.group(2)))); op='lt' if word in {'below','under','less than'} else 'gt'; then_text,else_text=cls._split_else(m.group(3).strip(' ,'))
                 return {'source_result':'battery_status','operator':op,'threshold':threshold,'then_text':then_text,'else_text':else_text}
-            m=re.search(r'\bif\s+(?:it|battery)\s+(?:is\s+)?(not\s+charging|charging)\s+(.+)$',text,re.I)
+            m=re.search(r'\bif\s+(?:it(?:\s+is|\'s)?|battery(?:\s+is)?)\s+(not\s+charging|charging)\s+(.+)$',text,re.I)
             if m:
                 expected=m.group(1).lower()=='charging'; then_text,else_text=cls._split_else(m.group(2).strip(' ,'))
                 return {'source_result':'battery_charging','operator':'eq','threshold':expected,'then_text':then_text,'else_text':else_text}
