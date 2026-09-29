@@ -3,6 +3,9 @@ set -euo pipefail
 FB_HOME="${FASTBRAIN_HOME:-$HOME/.fastbrain}"
 SOCK="${FASTBRAIN_ROUTER_SOCKET:-$FB_HOME/router/router.sock}"
 FALLBACK="$FB_HOME/fastbrain"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CLIENT="$ROOT/scripts/fastbrain-router-client.py"
+PY="${FASTBRAIN_PYTHON:-python3.13}"
 
 if [ "${1:-}" != "route" ]; then
   exec "$FALLBACK" "$@"
@@ -24,15 +27,18 @@ if [ -z "$text" ]; then
   echo "usage: fastbrain-fast route <text> [--dry-run|--execute]" >&2
   exit 2
 fi
-if [ -S "$SOCK" ]; then
-  if curl -fsS --max-time 1 --unix-socket "$SOCK" \
-      -X POST \
-      --data-urlencode "text=$text" \
-      --data "dry_run=$dry" \
-      --data "execute=$execute" \
-      http://localhost/route; then
-    printf '\n'
+
+if [ -S "$SOCK" ] && [ -f "$CLIENT" ] && command -v "$PY" >/dev/null 2>&1; then
+  args=("$PY" "$CLIENT" --socket "$SOCK")
+  [ "$dry" = 1 ] && args+=(--dry-run)
+  [ "$execute" = 1 ] && args+=(--execute)
+  args+=("$text")
+  if "${args[@]}"; then
     exit 0
   fi
 fi
-exec "$FALLBACK" route "$text" $([ "$dry" = 1 ] && printf '%s' '--dry-run') $([ "$execute" = 1 ] && printf '%s' '--execute')
+
+fallback=("$FALLBACK" route "$text")
+[ "$dry" = 1 ] && fallback+=(--dry-run)
+[ "$execute" = 1 ] && fallback+=(--execute)
+exec "${fallback[@]}"
