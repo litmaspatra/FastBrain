@@ -77,22 +77,41 @@ class MicroReasoner:
         em=re.match(r'^(.*?)(?:\s*,?\s*(?:otherwise|else)\s+)(.+)$',tail,re.I)
         return ((em.group(1) if em else tail).strip(' ,'),em.group(2).strip(' ,') if em else None)
 
+    @staticmethod
+    def _numeric_condition(word,value):
+        op='lt' if word.lower() in {'below','under','less than'} else 'gt'
+        return {'source_result':'battery_status','operator':op,'threshold':max(0,min(100,int(value)))}
+
+    @staticmethod
+    def _charging_condition(word):
+        return {'source_result':'battery_charging','operator':'eq','threshold':word.lower()=='charging'}
+
     @classmethod
     def _device_condition(cls,text,skill):
         if skill=='battery_status':
-            m=re.search(r'\bif\s+(?:it(?:\s*is|\'s)?|battery(?:\s+is)?)\s+(below|under|less\s+than|above|over|more\s+than)\s+(\d{1,3})\s*%?\s+(.+)$',text,re.I)
+            # Combined conditions intentionally use only values available from one
+            # battery read, so no extra device query is hidden inside a condition.
+            m=re.search(r"\bif\s+(?:it(?:\s*is|'s)?|battery(?:\s+is)?)\s+(below|under|less\s+than|above|over|more\s+than)\s+(\d{1,3})\s*%?\s+and\s+(?:(?:it|battery)(?:\s*is|'s)?\s+)?(not\s+charging|charging)\s+(.+)$",text,re.I)
             if m:
-                word=m.group(1).lower(); threshold=max(0,min(100,int(m.group(2)))); op='lt' if word in {'below','under','less than'} else 'gt'; then_text,else_text=cls._split_else(m.group(3).strip(' ,'))
-                return {'source_result':'battery_status','operator':op,'threshold':threshold,'then_text':then_text,'else_text':else_text}
-            m=re.search(r'\bif\s+(?:it(?:\s+is|\'s)?|battery(?:\s+is)?)\s+(not\s+charging|charging)\s+(.+)$',text,re.I)
+                then_text,else_text=cls._split_else(m.group(4).strip(' ,'))
+                return {'conditions':[cls._numeric_condition(m.group(1),m.group(2)),cls._charging_condition(m.group(3))],'then_text':then_text,'else_text':else_text}
+            m=re.search(r"\bif\s+(?:it(?:\s*is|'s)?|battery(?:\s+is)?)\s+(not\s+charging|charging)\s+and\s+(?:(?:it|battery)(?:\s*is|'s)?\s+)?(below|under|less\s+than|above|over|more\s+than)\s+(\d{1,3})\s*%?\s+(.+)$",text,re.I)
             if m:
-                expected=m.group(1).lower()=='charging'; then_text,else_text=cls._split_else(m.group(2).strip(' ,'))
-                return {'source_result':'battery_charging','operator':'eq','threshold':expected,'then_text':then_text,'else_text':else_text}
+                then_text,else_text=cls._split_else(m.group(4).strip(' ,'))
+                return {'conditions':[cls._charging_condition(m.group(1)),cls._numeric_condition(m.group(2),m.group(3))],'then_text':then_text,'else_text':else_text}
+            m=re.search(r"\bif\s+(?:it(?:\s*is|'s)?|battery(?:\s+is)?)\s+(below|under|less\s+than|above|over|more\s+than)\s+(\d{1,3})\s*%?\s+(.+)$",text,re.I)
+            if m:
+                then_text,else_text=cls._split_else(m.group(3).strip(' ,'))
+                return {'conditions':[cls._numeric_condition(m.group(1),m.group(2))],'then_text':then_text,'else_text':else_text}
+            m=re.search(r"\bif\s+(?:it|battery)(?:\s*is|'s)?\s+(not\s+charging|charging)\s+(.+)$",text,re.I)
+            if m:
+                then_text,else_text=cls._split_else(m.group(2).strip(' ,'))
+                return {'conditions':[cls._charging_condition(m.group(1))],'then_text':then_text,'else_text':else_text}
         if skill=='wifi_status':
-            m=re.search(r'\bif\s+(?:wifi|wi-fi|it)\s+(?:is\s+)?(not\s+connected|disconnected|connected)\s+(.+)$',text,re.I)
+            m=re.search(r"\bif\s+(?:wifi|wi-fi|it)(?:\s*is|'s)?\s+(not\s+connected|disconnected|connected)\s+(.+)$",text,re.I)
             if m:
                 expected=m.group(1).lower()=='connected'; then_text,else_text=cls._split_else(m.group(2).strip(' ,'))
-                return {'source_result':'wifi_connected','operator':'eq','threshold':expected,'then_text':then_text,'else_text':else_text}
+                return {'conditions':[{'source_result':'wifi_connected','operator':'eq','threshold':expected}],'then_text':then_text,'else_text':else_text}
         return None
 
     def _branch_step(self,text,state=None):
@@ -177,7 +196,9 @@ class MicroReasoner:
 
         condition=self._device_condition(text,skill)
         if condition:
-            cond={'op':'conditional','source_result':condition['source_result'],'operator':condition['operator'],'threshold':condition['threshold'],'then':self._branch_step(condition['then_text'],{}),'source':'microreasoner'}
+            conditions=list(condition.get('conditions') or [])
+            first=conditions[0] if conditions else {}
+            cond={'op':'conditional','conditions':conditions,'source_result':first.get('source_result'),'operator':first.get('operator'),'threshold':first.get('threshold'),'then':self._branch_step(condition['then_text'],{}),'source':'microreasoner'}
             if condition.get('else_text'):cond['else']=self._branch_step(condition['else_text'],{})
             plan.append(cond)
         else:
