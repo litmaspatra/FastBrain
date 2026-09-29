@@ -16,10 +16,10 @@ def cosine(a,b):
     return dot/(na*nb) if na and nb else 0.0
 
 class SemanticEngine:
-    """Dependency-free scorer with optional in-process or helper-process ONNX.
+    """Fast local semantic scorer with optional advisory ONNX fallback.
 
-    ONNX is advisory: weak predictions are ignored so learned skills and the
-    proven n-gram scorer remain available as fallback.
+    Strong n-gram/learned-skill matches return immediately. ONNX is only invoked
+    for ambiguous text, avoiding Python/ONNX helper startup cost on easy routes.
     """
     def __init__(self, registry, cfg=None):
         self.registry=registry; self.cfg=cfg; self.session=None; self.labels=[]; self.onnx_error=''
@@ -32,6 +32,9 @@ class SemanticEngine:
 
     def _threshold(self):
         return float(getattr(self.cfg,'semantic_min_confidence',0.75) or 0.75)
+
+    def _local_first_threshold(self):
+        return 0.90
 
     def _try_onnx(self):
         model=getattr(self.cfg,'semantic_model',None); labels=getattr(self.cfg,'semantic_labels',None)
@@ -49,7 +52,7 @@ class SemanticEngine:
             self.session=None; self.labels=[]; self.backend='ngram'
 
     def status(self):
-        return {'backend':self.backend,'onnx_ready':bool(self.session is not None or self.helper),'labels':len(self.labels),'helper':self.helper or None,'min_confidence':self._threshold(),'error':self.onnx_error or None}
+        return {'backend':self.backend,'onnx_ready':bool(self.session is not None or self.helper),'labels':len(self.labels),'helper':self.helper or None,'min_confidence':self._threshold(),'local_first_threshold':self._local_first_threshold(),'error':self.onnx_error or None}
 
     def _vector(self,text):
         import numpy as np
@@ -66,6 +69,17 @@ class SemanticEngine:
         m=max(values); ex=[math.exp(float(x)-m) for x in values]; total=sum(ex) or 1.0
         return [x/total for x in ex]
 
+    def _local_choice(self,text,options=None):
+        candidates=[s for s in self.registry.all() if not options or s['id'] in options]
+        q=features(text); scores={}
+        for s in candidates:
+            sims=[cosine(q,features(x)) for x in s.get('examples',[])]
+            scores[s['id']]=max(sims or [0.0])
+        if not scores:return Decision('normal_hermes',0,{})
+        best=max(scores,key=scores.get); raw=scores[best]
+        conf=max(0.0,min(0.99,0.48+0.55*raw))
+        return Decision(best,conf,scores)
+
     def _helper_choice(self,text,options=None):
         if not self.helper:return None
         try:
@@ -76,8 +90,7 @@ class SemanticEngine:
             scores={k:float(v) for k,v in (data.get('scores') or {}).items() if self.registry.get(k) and (not options or k in options)}
             if not scores:return None
             best=max(scores,key=scores.get); confidence=float(scores[best])
-            if confidence < self._threshold():
-                return None
+            if confidence < self._threshold():return None
             return Decision(best,min(.99,max(0.0,confidence)),scores)
         except Exception as exc:
             self.onnx_error=f'helper {type(exc).__name__}: {exc}'
@@ -93,36 +106,32 @@ class SemanticEngine:
             scores={label:float(probs[i]) for i,label in enumerate(self.labels[:len(probs)]) if (not options or label in options) and self.registry.get(label)}
             if not scores:return None
             best=max(scores,key=scores.get); confidence=float(scores[best])
-            if confidence < self._threshold(): return None
+            if confidence < self._threshold():return None
             return Decision(best,min(.99,max(0.0,confidence)),scores)
         except Exception as exc:
             self.onnx_error=f'{type(exc).__name__}: {exc}'; return None
 
     def route(self,text:str):
-        decision=self._onnx_choice(text)
-        if decision is not None:
-            skill=self.registry.get(decision.choice); domain=skill.get('category','unknown') if skill else 'unknown'
-            return domain,decision,{domain:decision.confidence}
         q=features(text); domain_scores={}
         for domain in self.registry.domains():
             examples=[x for s in self.registry.all() if s.get('category')==domain for x in s.get('examples',[])]
             domain_scores[domain]=max([cosine(q,features(x)) for x in examples] or [0.0])
         domain=max(domain_scores,key=domain_scores.get) if domain_scores else 'unknown'
         opts=[s['id'] for s in self.registry.all() if s.get('category')==domain]
-        return domain,self.choice(text,opts),domain_scores
+        local=self._local_choice(text,opts)
+        if local.confidence >= self._local_first_threshold():
+            return domain,local,domain_scores
+        onnx=self._onnx_choice(text)
+        if onnx is not None:
+            skill=self.registry.get(onnx.choice); onnx_domain=skill.get('category','unknown') if skill else 'unknown'
+            return onnx_domain,onnx,{onnx_domain:onnx.confidence}
+        return domain,local,domain_scores
 
     def choice(self,text:str, options:list[str]|None=None)->Decision:
+        local=self._local_choice(text,options)
+        if local.confidence >= self._local_first_threshold():return local
         onnx=self._onnx_choice(text,options)
-        if onnx is not None:return onnx
-        candidates=[s for s in self.registry.all() if not options or s['id'] in options]
-        q=features(text); scores={}
-        for s in candidates:
-            sims=[cosine(q,features(x)) for x in s.get('examples',[])]
-            scores[s['id']]=max(sims or [0.0])
-        if not scores:return Decision('normal_hermes',0,{})
-        best=max(scores,key=scores.get); raw=scores[best]
-        conf=max(0.0,min(0.99,0.48+0.55*raw))
-        return Decision(best,conf,scores)
+        return onnx if onnx is not None else local
 
     def boolean(self,text:str,positive:list[str],negative:list[str])->dict:
         q=features(text); p=max([cosine(q,features(x)) for x in positive] or [0]); n=max([cosine(q,features(x)) for x in negative] or [0]); den=p+n+1e-9
