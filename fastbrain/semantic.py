@@ -16,7 +16,11 @@ def cosine(a,b):
     return dot/(na*nb) if na and nb else 0.0
 
 class SemanticEngine:
-    """Dependency-free scorer with optional in-process or helper-process ONNX."""
+    """Dependency-free scorer with optional in-process or helper-process ONNX.
+
+    ONNX is advisory: weak predictions are ignored so learned skills and the
+    proven n-gram scorer remain available as fallback.
+    """
     def __init__(self, registry, cfg=None):
         self.registry=registry; self.cfg=cfg; self.session=None; self.labels=[]; self.onnx_error=''
         self.backend='ngram'; self.helper=getattr(cfg,'semantic_helper','') if cfg is not None else ''
@@ -25,6 +29,9 @@ class SemanticEngine:
                 self.backend='onnx_helper'
             else:
                 self._try_onnx()
+
+    def _threshold(self):
+        return float(getattr(self.cfg,'semantic_min_confidence',0.75) or 0.75)
 
     def _try_onnx(self):
         model=getattr(self.cfg,'semantic_model',None); labels=getattr(self.cfg,'semantic_labels',None)
@@ -42,7 +49,7 @@ class SemanticEngine:
             self.session=None; self.labels=[]; self.backend='ngram'
 
     def status(self):
-        return {'backend':self.backend,'onnx_ready':bool(self.session is not None or self.helper),'labels':len(self.labels),'helper':self.helper or None,'error':self.onnx_error or None}
+        return {'backend':self.backend,'onnx_ready':bool(self.session is not None or self.helper),'labels':len(self.labels),'helper':self.helper or None,'min_confidence':self._threshold(),'error':self.onnx_error or None}
 
     def _vector(self,text):
         import numpy as np
@@ -68,8 +75,10 @@ class SemanticEngine:
             if not data.get('ok'):return None
             scores={k:float(v) for k,v in (data.get('scores') or {}).items() if self.registry.get(k) and (not options or k in options)}
             if not scores:return None
-            best=max(scores,key=scores.get)
-            return Decision(best,min(.99,max(0.0,scores[best])),scores)
+            best=max(scores,key=scores.get); confidence=float(scores[best])
+            if confidence < self._threshold():
+                return None
+            return Decision(best,min(.99,max(0.0,confidence)),scores)
         except Exception as exc:
             self.onnx_error=f'helper {type(exc).__name__}: {exc}'
             return None
@@ -83,7 +92,9 @@ class SemanticEngine:
             vals=out[0].tolist() if hasattr(out[0],'tolist') else list(out[0]); probs=self._softmax(vals)
             scores={label:float(probs[i]) for i,label in enumerate(self.labels[:len(probs)]) if (not options or label in options) and self.registry.get(label)}
             if not scores:return None
-            best=max(scores,key=scores.get); return Decision(best,min(.99,max(0.0,scores[best])),scores)
+            best=max(scores,key=scores.get); confidence=float(scores[best])
+            if confidence < self._threshold(): return None
+            return Decision(best,min(.99,max(0.0,confidence)),scores)
         except Exception as exc:
             self.onnx_error=f'{type(exc).__name__}: {exc}'; return None
 
