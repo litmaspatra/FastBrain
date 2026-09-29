@@ -5,7 +5,7 @@ MODE="${1:-}"
 [ "$#" -gt 0 ] && shift
 
 ANOTHER=0
-if [ "${!#:-}" = "--another" ]; then
+if [ "$#" -gt 0 ] && [ "${!#}" = "--another" ]; then
   ANOTHER=1
   set -- "${@:1:$(($#-1))}"
 fi
@@ -117,4 +117,4 @@ if ! am start \
   exit 4
 fi
 
-echo "Opening $mode: $URL" 2>/dev/null || echo "Opening $MODE: $URL"
+echo "Opening $MODE: $URL"
