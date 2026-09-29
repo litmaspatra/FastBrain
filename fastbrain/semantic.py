@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib,json,math,re
+import hashlib,json,math,re,shlex,subprocess
 from collections import Counter
 from .models import Decision
 
@@ -16,18 +16,15 @@ def cosine(a,b):
     return dot/(na*nb) if na and nb else 0.0
 
 class SemanticEngine:
-    """Dependency-free scorer with an optional tiny ONNX classifier backend.
-
-    ONNX is additive only: deterministic routing still happens before this class,
-    and failures/missing runtime/model always fall back to the n-gram scorer.
-    Expected model input: float32 [N, semantic_dim] hashed bag-of-features.
-    Expected model output: logits/probabilities [N, num_labels].
-    """
+    """Dependency-free scorer with optional in-process or helper-process ONNX."""
     def __init__(self, registry, cfg=None):
         self.registry=registry; self.cfg=cfg; self.session=None; self.labels=[]; self.onnx_error=''
-        self.backend='ngram'
+        self.backend='ngram'; self.helper=getattr(cfg,'semantic_helper','') if cfg is not None else ''
         if cfg is not None and cfg.semantic_backend in {'auto','onnx'}:
-            self._try_onnx()
+            if self.helper:
+                self.backend='onnx_helper'
+            else:
+                self._try_onnx()
 
     def _try_onnx(self):
         model=getattr(self.cfg,'semantic_model',None); labels=getattr(self.cfg,'semantic_labels',None)
@@ -45,7 +42,7 @@ class SemanticEngine:
             self.session=None; self.labels=[]; self.backend='ngram'
 
     def status(self):
-        return {'backend':self.backend,'onnx_ready':self.session is not None,'labels':len(self.labels),'error':self.onnx_error or None}
+        return {'backend':self.backend,'onnx_ready':bool(self.session is not None or self.helper),'labels':len(self.labels),'helper':self.helper or None,'error':self.onnx_error or None}
 
     def _vector(self,text):
         import numpy as np
@@ -62,7 +59,24 @@ class SemanticEngine:
         m=max(values); ex=[math.exp(float(x)-m) for x in values]; total=sum(ex) or 1.0
         return [x/total for x in ex]
 
+    def _helper_choice(self,text,options=None):
+        if not self.helper:return None
+        try:
+            proc=subprocess.run(shlex.split(self.helper)+[text],capture_output=True,text=True,timeout=float(getattr(self.cfg,'semantic_helper_timeout',0.35) or 0.35))
+            if proc.returncode!=0:return None
+            data=json.loads(proc.stdout or '{}')
+            if not data.get('ok'):return None
+            scores={k:float(v) for k,v in (data.get('scores') or {}).items() if self.registry.get(k) and (not options or k in options)}
+            if not scores:return None
+            best=max(scores,key=scores.get)
+            return Decision(best,min(.99,max(0.0,scores[best])),scores)
+        except Exception as exc:
+            self.onnx_error=f'helper {type(exc).__name__}: {exc}'
+            return None
+
     def _onnx_choice(self,text,options=None):
+        helper=self._helper_choice(text,options)
+        if helper is not None:return helper
         if self.session is None:return None
         try:
             inp=self.session.get_inputs()[0].name; out=self.session.run(None,{inp:self._vector(text)})[0]
@@ -74,11 +88,10 @@ class SemanticEngine:
             self.onnx_error=f'{type(exc).__name__}: {exc}'; return None
 
     def route(self,text:str):
-        if self.session is not None:
-            decision=self._onnx_choice(text)
-            if decision is not None:
-                skill=self.registry.get(decision.choice); domain=skill.get('category','unknown') if skill else 'unknown'
-                return domain,decision,{domain:decision.confidence}
+        decision=self._onnx_choice(text)
+        if decision is not None:
+            skill=self.registry.get(decision.choice); domain=skill.get('category','unknown') if skill else 'unknown'
+            return domain,decision,{domain:decision.confidence}
         q=features(text); domain_scores={}
         for domain in self.registry.domains():
             examples=[x for s in self.registry.all() if s.get('category')==domain for x in s.get('examples',[])]
