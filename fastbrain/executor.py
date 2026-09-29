@@ -52,7 +52,7 @@ class Executor:
         if not contact:
             return {"ok": False, "status": "missing_contact"}
 
-        if result.context_source in {"hot", "working_memory"}:
+        if result.context_source in {"hot", "working_memory", "plan_context"}:
             return {"ok": True, "status": "trusted_context", "contact": contact}
 
         tool = shutil.which("termux-contact-list")
@@ -178,6 +178,16 @@ class Executor:
         """Resolve only explicit low-risk secondary skill steps from a plan."""
         out=[]
         for step in result.plan or []:
+            if step.get('op')=='hermes_clause':
+                out.append({
+                    'op':'hermes_clause',
+                    'text':step.get('text',''),
+                    'allowed':False,
+                    'route':'hermes',
+                    'deferred':True,
+                    'reason':'unresolved_compound_clause',
+                })
+                continue
             sid=step.get('skill')
             if not sid:
                 continue
