@@ -3,10 +3,16 @@ set -u
 
 MODE="${1:-}"
 [ "$#" -gt 0 ] && shift
+
+ANOTHER=0
+if [ "${!#:-}" = "--another" ]; then
+  ANOTHER=1
+  set -- "${@:1:$(($#-1))}"
+fi
 QUERY="$*"
 
 if [ -z "$MODE" ] || [ -z "$QUERY" ]; then
-  echo 'Usage: fast-media simpmusic|ytmusic|youtube|youtube-latest "SEARCH QUERY"' >&2
+  echo 'Usage: fast-media simpmusic|ytmusic|youtube|youtube-latest "SEARCH QUERY" [--another]' >&2
   exit 2
 fi
 
@@ -33,9 +39,13 @@ case "$MODE" in
     ;;
 esac
 
+STATE_DIR="$HOME/.fastbrain/state"
+STATE_FILE="$STATE_DIR/last-media-${MODE}.id"
+mkdir -p "$STATE_DIR"
+LAST_ID=""
+[ -f "$STATE_FILE" ] && LAST_ID="$(cat "$STATE_FILE" 2>/dev/null || true)"
+
 if [ "$MODE" = "youtube-latest" ]; then
-  # ytsearchdate is not supported consistently across yt-dlp builds.
-  # Fetch a small flat result set, then pick the newest dated result locally.
   SEARCH_JSON="$(timeout 8s yt-dlp \
     --flat-playlist \
     --dump-single-json \
@@ -62,18 +72,36 @@ if choice:
     print(choice.get("id") or "")
 ' 2>/dev/null)"
 else
-  VIDEO_ID="$(timeout 7s yt-dlp \
+  SEARCH_JSON="$(timeout 8s yt-dlp \
     --flat-playlist \
-    --playlist-end 1 \
-    --print '%(id)s' \
-    "ytsearch1:$QUERY" \
-    --no-warnings 2>/dev/null | head -n1)"
+    --dump-single-json \
+    "ytsearch5:$QUERY" \
+    --no-warnings 2>/dev/null || true)"
+  VIDEO_ID="$(printf '%s' "$SEARCH_JSON" | LAST_ID="$LAST_ID" ANOTHER="$ANOTHER" python3.13 -c '
+import json,os,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+entries=[e for e in (data.get("entries") or []) if e and e.get("id")]
+last=os.environ.get("LAST_ID","")
+another=os.environ.get("ANOTHER", "0")=="1"
+choice=None
+if another and last:
+    choice=next((e for e in entries if str(e.get("id")) != last), None)
+if choice is None:
+    choice=entries[0] if entries else None
+if choice:
+    print(choice.get("id") or "")
+' 2>/dev/null)"
 fi
 
 if [ -z "$VIDEO_ID" ]; then
   echo 'ERROR: Fast media search returned no result.' >&2
   exit 3
 fi
+
+printf '%s' "$VIDEO_ID" > "$STATE_FILE"
 
 if [ "$KIND" = "music" ]; then
   URL="https://music.youtube.com/watch?v=$VIDEO_ID"
@@ -89,4 +117,4 @@ if ! am start \
   exit 4
 fi
 
-echo "Opening $MODE: $URL"
+echo "Opening $mode: $URL" 2>/dev/null || echo "Opening $MODE: $URL"
