@@ -175,17 +175,32 @@ class Executor:
         return None, None
 
     def _prepare_followups(self, result):
-        """Resolve only explicit low-risk secondary skill steps from a plan."""
+        """Resolve explicit low-risk secondary skills and expose deferred planner steps."""
         out=[]
         for step in result.plan or []:
             if step.get('op')=='hermes_clause':
                 out.append({
                     'op':'hermes_clause',
                     'text':step.get('text',''),
+                    'context':dict(step.get('context') or {}),
                     'allowed':False,
                     'route':'hermes',
                     'deferred':True,
                     'reason':'unresolved_compound_clause',
+                })
+                continue
+            if step.get('op')=='conditional':
+                then_step=dict(step.get('then') or {})
+                visible_then={k:v for k,v in then_step.items() if k not in {'result','timeout'}}
+                out.append({
+                    'op':'conditional',
+                    'source_result':step.get('source_result'),
+                    'operator':step.get('operator'),
+                    'threshold':step.get('threshold'),
+                    'then':visible_then,
+                    'allowed':False,
+                    'deferred':True,
+                    'reason':'result_required_before_condition',
                 })
                 continue
             sid=step.get('skill')
