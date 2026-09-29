@@ -102,6 +102,9 @@ class Executor:
     def _prepare_skill_step(self,step):
         if step.get('op')=='noop':return {'op':'noop','allowed':True,'reason':'no_action'}
         if step.get('op')=='hermes_clause':return {'op':'hermes_clause','text':step.get('text',''),'context':dict(step.get('context') or {}),'allowed':False,'route':'hermes','deferred':True,'reason':'unresolved_compound_clause'}
+        if step.get('op')=='sequence':
+            prepared=[self._prepare_skill_step(s) for s in (step.get('steps') or [])[:3]]
+            return {'op':'sequence','steps':prepared,'allowed':all(bool(s.get('allowed')) for s in prepared),'reason':'bounded_low_risk_sequence'}
         sid=step.get('skill')
         if not sid:return {'allowed':False,'reason':'invalid_step'}
         skill=self.registry.get(sid)
@@ -114,10 +117,6 @@ class Executor:
     @staticmethod
     def _extract_battery_percent(text):
         s=str(text or '')
-        patterns=[r'(?i)(?:battery|level|percentage|percent)\D{0,20}(100|[1-9]?\d)\s*%?',r'\b(100|[1-9]?\d)\s*%\b']
-        for pattern in patterns:
-            m=re.search(pattern,s)
-            if m:return int(m.group(1))
         try:
             obj=json.loads(s)
             if isinstance(obj,dict):
@@ -126,12 +125,50 @@ class Executor:
                         v=int(obj[key])
                         if 0<=v<=100:return v
         except Exception:pass
+        for pattern in [r'(?i)(?:battery|level|percentage|percent)\D{0,20}(100|[1-9]?\d)\s*%?',r'\b(100|[1-9]?\d)\s*%\b']:
+            m=re.search(pattern,s)
+            if m:return int(m.group(1))
+        return None
+
+    @staticmethod
+    def _extract_charging(text):
+        s=str(text or '')
+        try:
+            obj=json.loads(s)
+            if isinstance(obj,dict):
+                status=str(obj.get('status') or obj.get('plugged') or '').strip().lower()
+                if status:
+                    if any(x in status for x in ('charging','full','ac','usb','wireless')):return True
+                    if any(x in status for x in ('discharging','not charging','unplugged')):return False
+        except Exception:pass
+        low=s.lower()
+        if re.search(r'\b(?:not charging|discharging|unplugged)\b',low):return False
+        if re.search(r'\b(?:charging|full)\b',low):return True
+        return None
+
+    @staticmethod
+    def _extract_wifi_connected(text):
+        s=str(text or '')
+        try:
+            obj=json.loads(s)
+            if isinstance(obj,dict):
+                state=str(obj.get('supplicant_state') or obj.get('state') or obj.get('status') or '').strip().lower()
+                ssid=str(obj.get('ssid') or '').strip()
+                if state:
+                    if state in {'completed','connected','enabled'}:return True
+                    if state in {'disconnected','inactive','disabled','uninitialized'}:return False
+                if ssid and ssid.lower() not in {'<unknown ssid>','unknown','null','none'}:return True
+        except Exception:pass
+        low=s.lower()
+        if re.search(r'\b(?:disconnected|not connected|disabled|inactive)\b',low):return False
+        if re.search(r'\b(?:connected|completed)\b',low):return True
         return None
 
     @staticmethod
     def _condition_matches(value,operator,threshold):
         if operator=='lt':return value<threshold
         if operator=='gt':return value>threshold
+        if operator=='eq':return value==threshold
         return False
 
     def _prepare_followups(self,result):
@@ -145,6 +182,12 @@ class Executor:
 
     def _execute_prepared_step(self,item):
         if item.get('op')=='noop':return {'op':'noop','executed':False,'success':True,'reason':'no_action'}
+        if item.get('op')=='sequence':
+            results=[]; ok=True
+            for step in item.get('steps') or []:
+                r=self._execute_prepared_step(step);results.append(r)
+                if r.get('success') is False:ok=False;break
+            return {'op':'sequence','executed':any(bool(r.get('executed')) for r in results),'success':ok,'steps':results}
         if not item.get('allowed') or not item.get('command'):return {k:v for k,v in item.items() if k not in {'result','timeout'}}
         fstart=time.perf_counter()
         try:
@@ -154,6 +197,12 @@ class Executor:
         except Exception as exc:
             flatency=(time.perf_counter()-fstart)*1000;self.experience.record(item.get('skill','unknown'),False,flatency)
             return {'skill':item.get('skill'),'executed':True,'success':False,'latency_ms':flatency,'command':item.get('command'),'error':str(exc)}
+
+    def _condition_value(self,source_result,primary_output):
+        if source_result=='battery_status':return self._extract_battery_percent(primary_output)
+        if source_result=='battery_charging':return self._extract_charging(primary_output)
+        if source_result=='wifi_connected':return self._extract_wifi_connected(primary_output)
+        return None
 
     def execute(self,result,dry_run=False):
         if result.route!="local":return {"executed":False,"route":result.route,"reason":result.reason}
@@ -172,10 +221,10 @@ class Executor:
                 primary_output=(proc.stdout or '')+'\n'+(proc.stderr or '')
                 for item in followups:
                     if item.get('op')=='conditional':
-                        value=self._extract_battery_percent(primary_output) if item.get('source_result')=='battery_status' else None
+                        value=self._condition_value(item.get('source_result'),primary_output)
                         if value is None:
                             followup_results.append({'op':'conditional','evaluated':False,'success':False,'reason':'source_result_unparseable','source_result':item.get('source_result'),'operator':item.get('operator'),'threshold':item.get('threshold')});ok=False;break
-                        matched=self._condition_matches(value,item.get('operator'),int(item.get('threshold')));branch_name='then' if matched else 'else';branch=item.get(branch_name)
+                        matched=self._condition_matches(value,item.get('operator'),item.get('threshold'));branch_name='then' if matched else 'else';branch=item.get(branch_name)
                         if not branch:
                             followup_results.append({'op':'conditional','evaluated':True,'value':value,'matched':matched,'selected':branch_name,'executed':False,'success':True,'reason':'no_branch_action'});continue
                         prepared=self._prepare_skill_step(branch);branch_result=self._execute_prepared_step(prepared);entry={'op':'conditional','evaluated':True,'value':value,'matched':matched,'selected':branch_name,'branch':branch_result};followup_results.append(entry)
