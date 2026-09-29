@@ -84,8 +84,6 @@ class ContextEngine:
         if skill in {"play_music", "choose_music_from_context"} and arguments.get("query"):
             self.db.work_set("music_query", "last", arguments["query"])
             self.remember_entity("track", arguments["query"])
-            # remember_action() is called only after successful execution, making
-            # this a clean source for persistent listening-history learning.
             self.db.music_history_record(arguments["query"], arguments.get("player") or "simpmusic", True)
 
     def time_bucket(self):
@@ -93,27 +91,59 @@ class ContextEngine:
         return "morning" if 5 <= h < 12 else "afternoon" if 12 <= h < 17 else "evening" if 17 <= h < 22 else "night"
 
     def music_history_candidates(self, limit=8):
-        rows=self.db.music_history(max(12,limit*2))
-        if not rows:
-            return []
+        successful=self.db.music_history(max(12,limit*2))
+        requested=self.db.music_request_history(max(20,limit*3))
         now=time.time()
+        merged={}
+
+        for row in requested:
+            key=(str(row.get('query') or '').lower(),str(row.get('player') or 'simpmusic'))
+            if not key[0]:
+                continue
+            item=merged.setdefault(key,{
+                'query':row.get('query'),'player':row.get('player') or 'simpmusic',
+                'requests':0,'plays':0,'successes':0,'success_rate':0.0,
+                'last_requested_at':0.0,'last_played_at':0.0,
+            })
+            item['requests']=int(row.get('requests') or 0)
+            item['last_requested_at']=float(row.get('last_requested_at') or 0.0)
+
+        for row in successful:
+            key=(str(row.get('query') or '').lower(),str(row.get('player') or 'simpmusic'))
+            if not key[0]:
+                continue
+            item=merged.setdefault(key,{
+                'query':row.get('query'),'player':row.get('player') or 'simpmusic',
+                'requests':0,'plays':0,'successes':0,'success_rate':0.0,
+                'last_requested_at':0.0,'last_played_at':0.0,
+            })
+            item['query']=row.get('query') or item['query']
+            item['plays']=int(row.get('plays') or 0)
+            item['successes']=int(row.get('successes') or 0)
+            item['success_rate']=float(row.get('success_rate') or 0.0)
+            item['last_played_at']=float(row.get('last_played_at') or 0.0)
+
         scored=[]
-        for row in rows:
-            plays=max(1,int(row.get('plays') or 0))
-            successes=int(row.get('successes') or 0)
-            success_rate=float(row.get('success_rate') or 0.0)
-            last=float(row.get('last_played_at') or 0.0)
-            age=max(0.0,now-last)
-            score=(successes*2.0)+(success_rate*2.0)+min(3.0,plays*0.25)
-            if age < 600:
+        for item in merged.values():
+            requests=item['requests']
+            plays=max(1,item['plays'])
+            successes=item['successes']
+            success_rate=item['success_rate']
+            score=(successes*2.0)+(success_rate*2.0)+min(3.0,plays*0.25)+min(4.0,requests*0.75)
+            last=max(item['last_played_at'],item['last_requested_at'])
+            age=max(0.0,now-last) if last else 999999.0
+            # Avoid immediately repeating the most recent request, but only mildly:
+            # request history is weaker evidence than a successful play.
+            if item['last_played_at'] and age < 600:
                 score-=3.0
-            elif age < 1800:
+            elif item['last_played_at'] and age < 1800:
                 score-=1.5
-            elif age < 7200:
-                score-=0.5
-            item=dict(row);item['score']=round(score,4)
+            elif age < 120:
+                score-=0.75
+            item['score']=round(score,4)
             scored.append(item)
-        scored.sort(key=lambda x:(x['score'],x.get('successes',0),x.get('last_played_at') or 0),reverse=True)
+
+        scored.sort(key=lambda x:(x['score'],x['successes'],x['requests'],max(x['last_played_at'],x['last_requested_at'])),reverse=True)
         return scored[:limit]
 
     def music_context(self):
@@ -127,7 +157,11 @@ class ContextEngine:
             "preference": m.get("value") if m else None,
             "recent_tracks": self.recent_values("track", 5),
             "history_candidates": [
-                {"query":x.get("query"),"player":x.get("player"),"plays":x.get("plays"),"successes":x.get("successes"),"score":x.get("score")}
+                {
+                    "query":x.get("query"),"player":x.get("player"),
+                    "requests":x.get("requests"),"plays":x.get("plays"),
+                    "successes":x.get("successes"),"score":x.get("score")
+                }
                 for x in history
             ],
             "source": m.get("_source", "history" if history else "none") if m else ("history" if history else "none"),
