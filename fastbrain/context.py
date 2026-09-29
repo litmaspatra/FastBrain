@@ -92,7 +92,10 @@ class ContextEngine:
 
     def music_context(self):
         bucket = self.time_bucket()
-        m = self.memory.lookup("preference", bucket, "music")
+        # FastBrain's real-time path must never block on a durable-memory miss.
+        # Hindsight remains durable truth, but preferences should be projected or
+        # warmed into memory_hot before latency-sensitive device-control requests.
+        m = self.memory.lookup_hot("preference", bucket, "music")
         return {
             "time_of_day": bucket,
             "preference": m.get("value") if m else None,
