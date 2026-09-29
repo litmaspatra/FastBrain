@@ -73,16 +73,39 @@ class MicroReasoner:
         return {'op':'hermes_clause','text':clause,'source':'planner','deferred':True,'context':keep}
 
     @staticmethod
-    def _battery_condition(text):
-        m=re.search(r'\bif\s+(?:it(?:\s*is|\'s)?|battery(?:\s+is)?)\s+(below|under|less\s+than|above|over|more\s+than)\s+(\d{1,3})\s*%?\s+(.+)$',text,re.I)
-        if not m:return None
-        word=m.group(1).lower(); threshold=max(0,min(100,int(m.group(2))))
-        op='lt' if word in {'below','under','less than'} else 'gt'
-        tail=m.group(3).strip(' ,')
+    def _split_else(tail):
         em=re.match(r'^(.*?)(?:\s*,?\s*(?:otherwise|else)\s+)(.+)$',tail,re.I)
-        then_text=(em.group(1) if em else tail).strip(' ,')
-        else_text=(em.group(2).strip(' ,') if em else None)
-        return op,threshold,then_text,else_text
+        return ((em.group(1) if em else tail).strip(' ,'),em.group(2).strip(' ,') if em else None)
+
+    @classmethod
+    def _device_condition(cls,text,skill):
+        if skill=='battery_status':
+            m=re.search(r'\bif\s+(?:it(?:\s*is|\'s)?|battery(?:\s+is)?)\s+(below|under|less\s+than|above|over|more\s+than)\s+(\d{1,3})\s*%?\s+(.+)$',text,re.I)
+            if m:
+                word=m.group(1).lower(); threshold=max(0,min(100,int(m.group(2)))); op='lt' if word in {'below','under','less than'} else 'gt'; then_text,else_text=cls._split_else(m.group(3).strip(' ,'))
+                return {'source_result':'battery_status','operator':op,'threshold':threshold,'then_text':then_text,'else_text':else_text}
+            m=re.search(r'\bif\s+(?:it|battery)\s+(?:is\s+)?(not\s+charging|charging)\s+(.+)$',text,re.I)
+            if m:
+                expected=m.group(1).lower()=='charging'; then_text,else_text=cls._split_else(m.group(2).strip(' ,'))
+                return {'source_result':'battery_charging','operator':'eq','threshold':expected,'then_text':then_text,'else_text':else_text}
+        if skill=='wifi_status':
+            m=re.search(r'\bif\s+(?:wifi|wi-fi|it)\s+(?:is\s+)?(not\s+connected|disconnected|connected)\s+(.+)$',text,re.I)
+            if m:
+                expected=m.group(1).lower()=='connected'; then_text,else_text=cls._split_else(m.group(2).strip(' ,'))
+                return {'source_result':'wifi_connected','operator':'eq','threshold':expected,'then_text':then_text,'else_text':else_text}
+        return None
+
+    def _branch_step(self,text,state=None):
+        state=dict(state or {}); parts=self._split_actions(text)
+        if len(parts)<=1:
+            return self._low_risk_clause(text,state) or self._deferred_clause(text,state)
+        steps=[]
+        for clause in parts[:3]:
+            step=self._low_risk_clause(clause,state)
+            if not step:step=self._deferred_clause(clause,state)
+            steps.append(step)
+            if step.get('skill'):self._update_plan_state(state,step.get('skill'),step.get('arguments'))
+        return {'op':'sequence','steps':steps,'source':'microreasoner'}
 
     def _natural_communication(self,text,skill,args):
         t=' '.join(text.strip().split())
@@ -152,12 +175,10 @@ class MicroReasoner:
                 if not step:plan.append(self._deferred_clause(clause,state)); continue
                 plan.append(step); self._update_plan_state(state,step.get('skill'),step.get('arguments'))
 
-        condition=self._battery_condition(text) if skill=='battery_status' else None
+        condition=self._device_condition(text,skill)
         if condition:
-            op,threshold,then_text,else_text=condition
-            then_step=self._low_risk_clause(then_text,{}) or self._deferred_clause(then_text,{})
-            cond={'op':'conditional','source_result':'battery_status','operator':op,'threshold':threshold,'then':then_step,'source':'microreasoner'}
-            if else_text:cond['else']=self._low_risk_clause(else_text,{}) or self._deferred_clause(else_text,{})
+            cond={'op':'conditional','source_result':condition['source_result'],'operator':condition['operator'],'threshold':condition['threshold'],'then':self._branch_step(condition['then_text'],{}),'source':'microreasoner'}
+            if condition.get('else_text'):cond['else']=self._branch_step(condition['else_text'],{})
             plan.append(cond)
         else:
             parts=self._split_actions(text)
