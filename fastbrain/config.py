@@ -20,6 +20,8 @@ class Config:
     semantic_model: Path | None = None
     semantic_labels: Path | None = None
     semantic_dim: int = 2048
+    semantic_helper: str = ""
+    semantic_helper_timeout: float = 0.35
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -43,6 +45,8 @@ class Config:
             semantic_model=model,
             semantic_labels=labels,
             semantic_dim=max(128, int(os.getenv("FASTBRAIN_SEMANTIC_DIM", "2048"))),
+            semantic_helper=os.getenv("FASTBRAIN_SEMANTIC_HELPER", "").strip(),
+            semantic_helper_timeout=float(os.getenv("FASTBRAIN_SEMANTIC_HELPER_TIMEOUT", "0.35")),
         )
 
     def ensure(self) -> None:
