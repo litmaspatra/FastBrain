@@ -1,0 +1,20 @@
+{
+  "labels": [
+    "battery_status",
+    "call_contact",
+    "choose_music_from_context",
+    "create_obsidian_note",
+    "create_reminder",
+    "open_app",
+    "pause_music",
+    "play_music",
+    "play_video",
+    "resume_music",
+    "send_sms",
+    "send_whatsapp",
+    "set_volume",
+    "torch_off",
+    "torch_on",
+    "wifi_status"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "examples": 52,
+  "labels": 16,
+  "dim": 2048,
+  "epochs": 400,
+  "train_accuracy": 1.0,
+  "feature_hash": "blake2b-64-mod-dim",
+  "onnx_ir_version": 13,
+  "onnx_opset": 13
+}
