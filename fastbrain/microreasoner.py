@@ -52,6 +52,17 @@ class MicroReasoner:
         plan=[]; low=' '.join(text.lower().split())
         args,extraction_plan=self._natural_communication(text,skill,args)
         plan.extend(extraction_plan)
+
+        # Safe compound follow-up: "... and then open Maps".  Strip the app
+        # clause out of a message so it is not sent to the contact, and represent
+        # the app launch as a separate low-risk plan step for the executor.
+        if skill in {'send_whatsapp','send_sms'} and args.get('message'):
+            m=re.match(r'^(.*?)(?:\s+and\s+then\s+|\s+then\s+)(?:open|launch)\s+([\w .+-]+?)\s*$',str(args['message']),re.I)
+            if m and m.group(1).strip() and m.group(2).strip():
+                args['message']=m.group(1).strip(' ,')
+                app=m.group(2).strip(' .,!?:;')
+                plan.append({'skill':'open_app','arguments':{'app':app},'source':'microreasoner'})
+
         if skill in {'call_contact','send_whatsapp','send_sms'} and args.get('contact'):
             # Skip alias lookup only when the contact itself came from pronoun-based working memory.
             # Named contacts in follow-up commands (e.g. "send the same message to Govind")
@@ -68,12 +79,24 @@ class MicroReasoner:
             else:
                 resolved,source=self.context.resolve_alias(args['contact']); args['contact']=resolved
             plan.append({'op':'resolve_contact','source':source,'value':resolved})
+
         if skill in {'play_music','choose_music_from_context'}:
+            # Remove an inline volume clause from the actual search query.  If
+            # that leaves a vague request such as "play something", let the
+            # normal music-context logic choose the user's preferred query.
+            if args.get('query'):
+                cleaned=re.sub(r'\s+(?:and\s+)?(?:then\s+)?(?:set\s+)?volume(?:\s+to)?\s+\d{1,3}\s*$', '', str(args['query']), flags=re.I).strip()
+                vague={'music','some music','something','something nice','something good','something i would like','something suitable'}
+                if cleaned.lower() in vague:
+                    args.pop('query',None)
+                elif cleaned:
+                    args['query']=cleaned
             mc=self.context.music_context()
             args.setdefault('query',mc.get('preference') or 'popular songs')
             args.setdefault('player','simpmusic')
             args['context']=mc
             plan.append({'op':'choose_music','context':mc,'player':args['player']})
+
         if skill=='open_app' and not args.get('app'):
             patterns=[
                 r'^(?:get|put|take)\s+me\s+(?:into|inside|to)\s+([\w .+-]+?)(?:\s+(?:somehow|please|pls))?$',
@@ -87,7 +110,8 @@ class MicroReasoner:
                         args['app']=app
                         plan.append({'op':'extract_app','source':'microreasoner','value':app})
                         break
-        m=re.search(r'\b(?:and\s+)?(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})\b',low)
+
+        m=re.search(r'\b(?:and\s+)?(?:then\s+)?(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})\b',low)
         if m and skill in {'play_music','choose_music_from_context'}:
-            plan.append({'skill':'set_volume','arguments':{'level':max(0,min(100,int(m.group(1))))}})
+            plan.append({'skill':'set_volume','arguments':{'level':max(0,min(100,int(m.group(1))))},'source':'microreasoner'})
         return args, plan[:self.cfg.max_plan_steps]
