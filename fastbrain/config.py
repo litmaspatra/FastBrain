@@ -16,11 +16,17 @@ class Config:
     execute_threshold: float = 0.90
     context_threshold: float = 0.70
     max_plan_steps: int = 4
+    semantic_backend: str = "auto"
+    semantic_model: Path | None = None
+    semantic_labels: Path | None = None
+    semantic_dim: int = 2048
 
     @classmethod
     def from_env(cls) -> "Config":
         home = Path(os.getenv("FASTBRAIN_HOME", str(Path.home() / ".fastbrain"))).expanduser()
         pkg_skills = Path(__file__).resolve().parent.parent / "skills" / "builtin.json"
+        model = Path(os.getenv("FASTBRAIN_SEMANTIC_MODEL", str(home / "models" / "semantic.onnx"))).expanduser()
+        labels = Path(os.getenv("FASTBRAIN_SEMANTIC_LABELS", str(home / "models" / "semantic-labels.json"))).expanduser()
         return cls(
             home=home,
             db_path=Path(os.getenv("FASTBRAIN_DB", str(home / "fastbrain.db"))).expanduser(),
@@ -33,8 +39,13 @@ class Config:
             execute_threshold=float(os.getenv("FASTBRAIN_EXECUTE_THRESHOLD", "0.90")),
             context_threshold=float(os.getenv("FASTBRAIN_CONTEXT_THRESHOLD", "0.70")),
             max_plan_steps=int(os.getenv("FASTBRAIN_MAX_PLAN_STEPS", "4")),
+            semantic_backend=os.getenv("FASTBRAIN_SEMANTIC_BACKEND", "auto").lower(),
+            semantic_model=model,
+            semantic_labels=labels,
+            semantic_dim=max(128, int(os.getenv("FASTBRAIN_SEMANTIC_DIM", "2048"))),
         )
 
     def ensure(self) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        (self.home / "models").mkdir(parents=True, exist_ok=True)
