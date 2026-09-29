@@ -6,21 +6,22 @@ from .db import DB
 
 class SkillRegistry:
     def __init__(self, path: Path, db: DB):
-        self.db=db; self.skills={}
+        self.db=db; self.skills={}; self.learned_ids=set()
         if path.exists():
             for s in json.loads(path.read_text()): self.skills[s['id']]=s
-        for r in db.conn.execute("SELECT definition FROM learned_skills WHERE enabled=1"):
-            s=json.loads(r['definition']); self.skills[s['id']]=s
+        for r in db.conn.execute("SELECT id,definition FROM learned_skills WHERE enabled=1"):
+            s=json.loads(r['definition']); self.skills[s['id']]=s; self.learned_ids.add(s['id'])
 
     def get(self, skill): return self.skills.get(skill)
     def all(self): return list(self.skills.values())
     def domains(self): return sorted({s.get('category','unknown') for s in self.skills.values()})
+    def is_learned(self, skill): return skill in self.learned_ids
 
     def register(self, skill: dict[str,Any]):
         if not re.fullmatch(r"[a-z][a-z0-9_]{2,64}",skill.get('id','')): raise ValueError('invalid skill id')
         skill.setdefault('category','learned'); skill.setdefault('examples',[]); skill.setdefault('risk','medium')
         self.db.conn.execute("INSERT INTO learned_skills(id,definition,enabled,version,updated_at) VALUES(?,?,1,1,strftime('%s','now')) ON CONFLICT(id) DO UPDATE SET definition=excluded.definition,version=learned_skills.version+1,updated_at=excluded.updated_at",(skill['id'],json.dumps(skill)))
-        self.db.conn.commit(); self.skills[skill['id']]=skill
+        self.db.conn.commit(); self.skills[skill['id']]=skill; self.learned_ids.add(skill['id'])
 
     @staticmethod
     def render_command(skill: dict[str,Any], arguments: dict[str,Any]):
