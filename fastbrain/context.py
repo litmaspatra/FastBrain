@@ -96,6 +96,11 @@ class ContextEngine:
         # Hindsight remains durable truth, but preferences should be projected or
         # warmed into memory_hot before latency-sensitive device-control requests.
         m = self.memory.lookup_hot("preference", bucket, "music")
+        # A negative cache entry means "no usable preference for this bucket".
+        # It is metadata, not a real preference value, and must never reach the
+        # media executor as a query string.
+        if m and m.get("_negative"):
+            m = None
         return {
             "time_of_day": bucket,
             "preference": m.get("value") if m else None,
