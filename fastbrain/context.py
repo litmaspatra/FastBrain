@@ -23,7 +23,7 @@ class ContextEngine:
         if skill in {"call_contact", "send_whatsapp", "send_sms"}:
             return ["aliases", "recent_people"]
         if skill in {"play_music", "choose_music_from_context"}:
-            return ["music_preferences", "recent_tracks", "time_of_day"]
+            return ["music_preferences", "recent_tracks", "time_of_day", "listening_history"]
         if skill == "open_app":
             return ["recent_apps"]
         return []
@@ -39,7 +39,6 @@ class ContextEngine:
         row = rows[0]
         ttl = self.TTL_SECONDS.get(kind) if max_age_seconds is None else max_age_seconds
         if ttl is not None and time.time() - float(row.get("updated_at", 0)) > ttl:
-            # If the newest row is stale, every older row of the same kind is stale too.
             self.db.work_delete(kind)
             return None
         return row["value"]
@@ -90,20 +89,47 @@ class ContextEngine:
         h = time.localtime().tm_hour
         return "morning" if 5 <= h < 12 else "afternoon" if 12 <= h < 17 else "evening" if 17 <= h < 22 else "night"
 
+    def music_history_candidates(self, limit=8):
+        """Rank successful past music queries, penalizing the most recent repeats."""
+        rows=self.db.music_history(max(12,limit*2))
+        if not rows:
+            return []
+        now=time.time()
+        scored=[]
+        for row in rows:
+            plays=max(1,int(row.get('plays') or 0))
+            successes=int(row.get('successes') or 0)
+            success_rate=float(row.get('success_rate') or 0.0)
+            last=float(row.get('last_played_at') or 0.0)
+            age=max(0.0,now-last)
+            # Frequency matters most; successful history gets a bonus. Very recent
+            # plays are temporarily penalized so vague requests don't repeat the
+            # exact same song/query over and over.
+            score=(successes*2.0)+(success_rate*2.0)+min(3.0,plays*0.25)
+            if age < 600:
+                score-=3.0
+            elif age < 1800:
+                score-=1.5
+            elif age < 7200:
+                score-=0.5
+            item=dict(row);item['score']=round(score,4)
+            scored.append(item)
+        scored.sort(key=lambda x:(x['score'],x.get('successes',0),x.get('last_played_at') or 0),reverse=True)
+        return scored[:limit]
+
     def music_context(self):
         bucket = self.time_bucket()
-        # FastBrain's real-time path must never block on a durable-memory miss.
-        # Hindsight remains durable truth, but preferences should be projected or
-        # warmed into memory_hot before latency-sensitive device-control requests.
         m = self.memory.lookup_hot("preference", bucket, "music")
-        # A negative cache entry means "no usable preference for this bucket".
-        # It is metadata, not a real preference value, and must never reach the
-        # media executor as a query string.
         if m and m.get("_negative"):
             m = None
+        history=self.music_history_candidates(8)
         return {
             "time_of_day": bucket,
             "preference": m.get("value") if m else None,
             "recent_tracks": self.recent_values("track", 5),
-            "source": m.get("_source", "none") if m else "none",
+            "history_candidates": [
+                {"query":x.get("query"),"player":x.get("player"),"plays":x.get("plays"),"successes":x.get("successes"),"score":x.get("score")}
+                for x in history
+            ],
+            "source": m.get("_source", "history" if history else "none") if m else ("history" if history else "none"),
         }
