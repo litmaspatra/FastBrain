@@ -6,9 +6,10 @@ FastBrain is a lightweight, local-first **reflex + context + skill-routing layer
 
 - deterministic reflex router
 - dependency-free local semantic decision engine (`choice`, probabilistic matching, confidence)
+- MiniLM ONNX semantic layer with persistent Termux service
 - hierarchical skill registry with dynamic learned skills
 - working memory and alias/preference resolution
-- MicroReasoner for context and small safe compositions
+- MicroReasoner for context and bounded safe compositions
 - Hindsight Lite bridge with **hot**, **direct**, and **hybrid** modes
 - benchmark for hot-cache vs direct Hindsight latency
 - skill learner (low/medium risk; high-risk rejected)
@@ -18,6 +19,26 @@ FastBrain is a lightweight, local-first **reflex + context + skill-routing layer
 - non-invasive Hermes pre-router wrapper
 - Termux installer/validator
 - Python 3.13 CI tests
+
+## Workflow engine
+
+FastBrain now supports bounded local workflows without becoming an unrestricted agent:
+
+- ordered local plans with at most a small number of explicit steps
+- same-command app/media/contact context reuse
+- communication pronoun reuse while preserving contact safety
+- deferred `hermes_clause` nodes for unclear steps instead of losing the whole plan
+- deferred clauses carry useful local context such as the current app/contact/media query
+- battery percentage conditions (`below`, `above`, etc.)
+- charging / not-charging conditions
+- Wi-Fi connected / disconnected conditions
+- `else` / `otherwise` branches
+- compound low-risk conditional branches
+- combined battery conditions such as `battery < 20 AND not charging`
+- same battery read reused for percentage + charging evaluation
+- all-or-defer safety for mixed conditional sequences: if any branch step is unresolved or not low-risk, the branch does not partially execute
+
+Medium/high-risk secondary skills remain blocked by the executor. Unknown clauses are never converted into arbitrary shell commands.
 
 ## Safety / isolation
 
@@ -35,14 +56,22 @@ bash scripts/validate-termux.sh
 
 ## Try routing safely
 
+Use dry-run while validating device workflows:
+
 ```bash
 ~/.fastbrain/fastbrain cache-put alias govind butagorira --scope communication
-~/.fastbrain/fastbrain route --dry-run "call Govind"
-~/.fastbrain/fastbrain route "play something"
-~/.fastbrain/fastbrain route "explain quantum computing"
+~/.fastbrain/fastbrain route "call Govind" --dry-run
+~/.fastbrain/fastbrain route "play something" --dry-run
+~/.fastbrain/fastbrain route "check battery and if it's below 20 and not charging open battery settings otherwise do nothing" --dry-run
 ```
 
-Complex/uncertain input returns `route: hermes` rather than forcing a local action.
+Complex/uncertain input returns `route: hermes` or an explicit deferred `hermes_clause` rather than forcing a local action.
+
+Run the final roadmap regression set without executing device actions:
+
+```bash
+bash scripts/test-roadmap-final.sh
+```
 
 ## Hindsight scenarios
 
