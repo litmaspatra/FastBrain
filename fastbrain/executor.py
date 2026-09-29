@@ -143,11 +143,12 @@ class Executor:
             return {"op": "hermes_clause", "text": step.get("text", ""), "context": dict(step.get("context") or {}), "allowed": False, "route": "hermes", "deferred": True, "reason": "unresolved_compound_clause"}
         if step.get("op") == "sequence":
             prepared = [self._prepare_skill_step(s) for s in (step.get("steps") or [])[:3]]
+            prepared = [s for s in prepared if s is not None]
             allowed = bool(prepared) and all(bool(s.get("allowed")) for s in prepared)
             return {"op": "sequence", "steps": prepared, "allowed": allowed, "deferred": not allowed, "reason": "bounded_low_risk_sequence" if allowed else "sequence_contains_deferred_or_blocked_step"}
         sid = step.get("skill")
         if not sid:
-            return {"allowed": False, "reason": "invalid_step"}
+            return None
         skill = self.registry.get(sid)
         if not skill or skill.get("risk", "low") != "low":
             return {"skill": sid, "allowed": False, "reason": "secondary_skill_not_low_risk"}
@@ -237,14 +238,35 @@ class Executor:
 
     def _prepare_followups(self, result):
         out = []
+        blocked_by_deferred = False
+        bookkeeping_ops = {"extract_message", "extract_contact", "extract_app", "resolve_contact", "resolve_followup", "choose_music"}
         for step in result.plan or []:
+            if step.get("op") in bookkeeping_ops:
+                continue
             if step.get("op") == "conditional":
                 conditions = list(step.get("conditions") or [])
                 if not conditions and step.get("source_result"):
                     conditions = [{"source_result": step.get("source_result"), "operator": step.get("operator"), "threshold": step.get("threshold")}]
-                out.append({"op": "conditional", "conditions": conditions, "source_result": step.get("source_result"), "operator": step.get("operator"), "threshold": step.get("threshold"), "then": dict(step.get("then") or {}), "else": dict(step.get("else") or {}) if step.get("else") else None, "allowed": False, "deferred": True, "reason": "result_required_before_condition"})
+                item = {"op": "conditional", "conditions": conditions, "source_result": step.get("source_result"), "operator": step.get("operator"), "threshold": step.get("threshold"), "then": dict(step.get("then") or {}), "else": dict(step.get("else") or {}) if step.get("else") else None, "allowed": False, "deferred": True, "reason": "result_required_before_condition"}
+                if blocked_by_deferred:
+                    item["reason"] = "blocked_by_deferred_clause"
+                    item["blocked"] = True
+                out.append(item)
                 continue
-            out.append(self._prepare_skill_step(step))
+            prepared = self._prepare_skill_step(step)
+            if prepared is None:
+                continue
+            if step.get("op") == "hermes_clause":
+                out.append(prepared)
+                blocked_by_deferred = True
+                continue
+            if blocked_by_deferred:
+                prepared["allowed"] = False
+                prepared["blocked"] = True
+                prepared["reason"] = "blocked_by_deferred_clause"
+                prepared.pop("command", None)
+                prepared.pop("executor_source", None)
+            out.append(prepared)
         return out
 
     def _execute_prepared_step(self, item):
@@ -328,6 +350,9 @@ class Executor:
             if ok:
                 primary_output = (proc.stdout or "") + "\n" + (proc.stderr or "")
                 for item in followups:
+                    if item.get("blocked"):
+                        followup_results.append({k: v for k, v in item.items() if k not in {"result", "timeout"}})
+                        continue
                     if item.get("op") == "conditional":
                         conditions = list(item.get("conditions") or [])
                         matched, evaluated, missing_source = self._evaluate_conditions(conditions, primary_output)
@@ -341,6 +366,10 @@ class Executor:
                             followup_results.append({"op": "conditional", "evaluated": True, "conditions": evaluated, "matched": matched, "selected": branch_name, "executed": False, "success": True, "reason": "no_branch_action"})
                             continue
                         prepared = self._prepare_skill_step(branch)
+                        if prepared is None:
+                            followup_results.append({"op": "conditional", "evaluated": True, "conditions": evaluated, "matched": matched, "selected": branch_name, "executed": False, "success": False, "reason": "invalid_branch"})
+                            ok = False
+                            break
                         branch_result = self._execute_prepared_step(prepared)
                         entry = {"op": "conditional", "evaluated": True, "conditions": evaluated, "matched": matched, "selected": branch_name, "branch": branch_result}
                         followup_results.append(entry)
