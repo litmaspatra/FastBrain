@@ -121,7 +121,10 @@ class Executor:
                     mode = str(result.arguments.get("player") or "simpmusic")
                     if mode not in {"simpmusic", "ytmusic"}:
                         mode = "simpmusic"
-                return [str(fast_media), mode, query], "fastbrain_media"
+                command = [str(fast_media), mode, query]
+                if result.arguments.get("avoid"):
+                    command.append("--another")
+                return command, "fastbrain_media"
 
         if result.skill in {"send_whatsapp", "send_sms"}:
             helper_name = "whatsapp-message" if result.skill == "send_whatsapp" else "send-message"
