@@ -122,6 +122,19 @@ class FastBrain:
     def _deterministic(self,text):
         low=' '.join(text.lower().split());fixed={'torch on':'torch_on','turn torch on':'torch_on','torch jalao':'torch_on','torch off':'torch_off','turn torch off':'torch_off','torch band karo':'torch_off','battery':'battery_status','battery status':'battery_status','wifi status':'wifi_status','pause music':'pause_music','resume music':'resume_music'}
         if low in fixed:return fixed[low],.995
+        # Preserve deterministic confidence for a known first action in a compound
+        # command. The MicroReasoner still owns parsing/ordering of later steps.
+        # Only promote when the suffix clearly begins another supported action.
+        for phrase in sorted(fixed,key=len,reverse=True):
+            if not low.startswith(phrase):
+                continue
+            rest=low[len(phrase):]
+            m=re.match(r'^(?:\s*,\s*|\s+and\s+then\s+|\s+then\s+|\s+and\s+)(.+)$',rest)
+            if not m:
+                continue
+            follow=m.group(1).strip()
+            if re.match(r'^(?:open|launch|play|set\s+volume|volume|turn\s+torch|torch\s+(?:on|off)|battery|wifi\s+status)\b',follow):
+                return fixed[phrase],.995
         if re.search(r'\b(?:battery|charge)\b',low) and re.search(r'\b(?:how much|how many|left|remaining|status|level|percent|percentage|kitni|kitna)\b',low):return 'battery_status',.995
         if re.match(r'^(?:open|launch|take me (?:into|to)|go to|switch to|bring up)\s+.+$',low) or re.match(r'^.+\s+(?:kholo|open karo)$',low):return 'open_app',.98
         if re.match(r'^(?:call|phone|ring)\s+.+$',low) or re.match(r'^.+\s+ko\s+(?:call|phone)',low):return 'call_contact',.98
