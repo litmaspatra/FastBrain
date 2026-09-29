@@ -3,6 +3,18 @@ import time
 
 
 class ContextEngine:
+    TTL_SECONDS = {
+        "pending_confirmation": 60,
+        "person": 900,
+        "app": 600,
+        "message": 600,
+        "action": 600,
+        "media_query": 1800,
+        "media_player": 1800,
+        "music_query": 1800,
+        "track": 3600,
+    }
+
     def __init__(self, db, memory):
         self.db = db
         self.memory = memory
@@ -20,9 +32,31 @@ class ContextEngine:
         m = self.memory.lookup_hot("alias", name, "communication")
         return (m.get("value") if m else name, m.get("_source", "none") if m else "none")
 
-    def recent(self, kind):
+    def recent(self, kind, max_age_seconds=None):
         rows = self.db.work_recent(kind, 1)
-        return rows[0]["value"] if rows else None
+        if not rows:
+            return None
+        row = rows[0]
+        ttl = self.TTL_SECONDS.get(kind) if max_age_seconds is None else max_age_seconds
+        if ttl is not None and time.time() - float(row.get("updated_at", 0)) > ttl:
+            # If the newest row is stale, every older row of the same kind is stale too.
+            self.db.work_delete(kind)
+            return None
+        return row["value"]
+
+    def recent_values(self, kind, limit=5, max_age_seconds=None):
+        ttl = self.TTL_SECONDS.get(kind) if max_age_seconds is None else max_age_seconds
+        now = time.time()
+        out = []
+        stale = False
+        for row in self.db.work_recent(kind, limit):
+            if ttl is not None and now - float(row.get("updated_at", 0)) > ttl:
+                stale = True
+                continue
+            out.append(row["value"])
+        if stale and not out:
+            self.db.work_delete(kind)
+        return out
 
     def remember_entity(self, kind, value):
         self.db.work_set(kind, str(value).lower(), value)
@@ -31,14 +65,7 @@ class ContextEngine:
         self.db.work_set("pending_confirmation", "contact", payload)
 
     def pending_confirmation(self, max_age_seconds=60):
-        rows = self.db.work_recent("pending_confirmation", 1)
-        if not rows:
-            return None
-        row = rows[0]
-        if time.time() - float(row.get("updated_at", 0)) > max_age_seconds:
-            self.clear_pending_confirmation()
-            return None
-        return row["value"]
+        return self.recent("pending_confirmation", max_age_seconds=max_age_seconds)
 
     def clear_pending_confirmation(self):
         self.db.work_delete("pending_confirmation", "contact")
@@ -69,6 +96,6 @@ class ContextEngine:
         return {
             "time_of_day": bucket,
             "preference": m.get("value") if m else None,
-            "recent_tracks": [x["value"] for x in self.db.work_recent("track", 5)],
+            "recent_tracks": self.recent_values("track", 5),
             "source": m.get("_source", "none") if m else "none",
         }
