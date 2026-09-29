@@ -25,7 +25,10 @@ mv "$APP_DIR.new" "$APP_DIR"
 # FastBrain-owned adapters. Existing Hermes phone helpers are never modified.
 cp "$ROOT/scripts/hindsight-direct.py" "$BIN_DIR/hindsight-direct.py"
 cp "$ROOT/scripts/fast-media.sh" "$BIN_DIR/fast-media"
-chmod 700 "$BIN_DIR/hindsight-direct.py" "$BIN_DIR/fast-media"
+cp "$ROOT/scripts/minilm-semantic-service.py" "$BIN_DIR/minilm-semantic-service.py"
+cp "$ROOT/scripts/start-minilm.sh" "$BIN_DIR/start-minilm"
+cp "$ROOT/scripts/stop-minilm.sh" "$BIN_DIR/stop-minilm"
+chmod 700 "$BIN_DIR/hindsight-direct.py" "$BIN_DIR/fast-media" "$BIN_DIR/minilm-semantic-service.py" "$BIN_DIR/start-minilm" "$BIN_DIR/stop-minilm"
 rm -f "$BIN_DIR/fast-simpmusic"
 
 cat > "$HOME_DIR/fastbrain.env.example" <<'ENV'
@@ -36,6 +39,12 @@ FASTBRAIN_MEMORY_MODE=hybrid
 # FASTBRAIN_HINDSIGHT_PATH=/recall
 FASTBRAIN_HINDSIGHT_TIMEOUT=5.0
 FASTBRAIN_HINDSIGHT_LIMIT=3
+# Optional persistent MiniLM semantic service:
+# FASTBRAIN_SEMANTIC_BACKEND=minilm
+# FASTBRAIN_MINILM_SOCKET="$HOME/.fastbrain/minilm/minilm.sock"
+# FASTBRAIN_MINILM_TIMEOUT=0.20
+# FASTBRAIN_MINILM_MIN_SIMILARITY=0.45
+# FASTBRAIN_MINILM_MIN_MARGIN=0.10
 ENV
 
 ENV_FILE="$HOME_DIR/fastbrain.env"
