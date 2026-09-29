@@ -41,6 +41,16 @@ CREATE TABLE IF NOT EXISTS route_log (
   skill TEXT, confidence REAL, memory_source TEXT, latency_ms REAL,
   route TEXT, reason TEXT, created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS music_history (
+  query TEXT NOT NULL,
+  player TEXT NOT NULL DEFAULT 'simpmusic',
+  plays INTEGER NOT NULL DEFAULT 0,
+  successes INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0,
+  last_played_at REAL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(query,player)
+);
 """
 
 class DB:
@@ -94,6 +104,32 @@ class DB:
         else:
             cur=self.conn.execute("DELETE FROM working_memory WHERE kind=? AND key=?",(kind,key))
         self.conn.commit(); return int(cur.rowcount or 0)
+
+    def music_history_record(self, query, player='simpmusic', success=True):
+        query=' '.join(str(query or '').strip().split())
+        player=str(player or 'simpmusic').strip() or 'simpmusic'
+        if not query:
+            return
+        now=time.time()
+        self.conn.execute("""INSERT INTO music_history(query,player,plays,successes,failures,last_played_at,updated_at)
+        VALUES(?,?,?,?,?,?,?) ON CONFLICT(query,player) DO UPDATE SET
+        plays=music_history.plays+1,
+        successes=music_history.successes+excluded.successes,
+        failures=music_history.failures+excluded.failures,
+        last_played_at=CASE WHEN excluded.successes>0 THEN excluded.last_played_at ELSE music_history.last_played_at END,
+        updated_at=excluded.updated_at""",
+        (query,player,1,1 if success else 0,0 if success else 1,now if success else None,now))
+        self.conn.commit()
+
+    def music_history(self, limit=20):
+        rows=[]
+        q="""SELECT *,
+        CASE WHEN plays>0 THEN CAST(successes AS REAL)/plays ELSE 0 END AS success_rate
+        FROM music_history WHERE successes>0
+        ORDER BY successes DESC, COALESCE(last_played_at,0) DESC LIMIT ?"""
+        for r in self.conn.execute(q,(int(limit),)):
+            rows.append(dict(r))
+        return rows
 
     def record_route(self, text, result):
         self.conn.execute("INSERT INTO route_log(input,domain,skill,confidence,memory_source,latency_ms,route,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)",(text,result.domain,result.skill,result.confidence,result.context_source,result.latency_ms,result.route,result.reason,time.time())); self.conn.commit()
