@@ -12,7 +12,20 @@ class SkillRegistry:
         for r in db.conn.execute("SELECT id,definition FROM learned_skills WHERE enabled=1"):
             s=json.loads(r['definition']); self.skills[s['id']]=s; self.learned_ids.add(s['id'])
 
-    def get(self, skill): return self.skills.get(skill)
+    def _learned_trusted(self, skill):
+        if skill not in self.learned_ids:return True
+        row=self.db.conn.execute('SELECT * FROM experience WHERE skill=?',(skill,)).fetchone()
+        if not row or row['uses']<3:return True
+        uses=int(row['uses'] or 0); successes=int(row['successes'] or 0); failures=int(row['failures'] or 0); corrections=int(row['corrections'] or 0)
+        rate=successes/uses if uses else 0
+        if failures>=2 and rate<0.75:return False
+        if corrections>=2 and rate<0.9:return False
+        if rate<0.6:return False
+        return True
+
+    def get(self, skill):
+        if skill and not self._learned_trusted(skill):return None
+        return self.skills.get(skill)
     def all(self): return list(self.skills.values())
     def domains(self): return sorted({s.get('category','unknown') for s in self.skills.values()})
     def is_learned(self, skill): return skill in self.learned_ids
