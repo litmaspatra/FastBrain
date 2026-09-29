@@ -3,8 +3,30 @@ import re
 
 class MicroReasoner:
     def __init__(self,cfg,registry,context): self.cfg=cfg; self.registry=registry; self.context=context
+
+    def _app_from_text(self,text):
+        t=' '.join(text.strip().split())
+        patterns=[
+            r'^(?:open|launch|start)\s+(.+?)(?:\s+please)?$',
+            r'^(.+?)\s+(?:kholo|open karo)$',
+            r'^(?:take me (?:into|to)|go to|switch to|bring up|show me|put me (?:in|into|inside)|get me (?:in|into|inside))\s+(.+?)(?:\s+(?:somehow|please|now))?$',
+            r'^(?:i want to (?:open|use|go to)|let me (?:open|use|go to))\s+(.+?)(?:\s+(?:please|now))?$',
+        ]
+        for pattern in patterns:
+            m=re.match(pattern,t,re.I)
+            if m:
+                value=m.group(1).strip(' .,!?')
+                if value:
+                    return value
+        return None
+
     def build(self,text,skill,args):
         plan=[]; low=' '.join(text.lower().split())
+        if skill=='open_app' and not args.get('app'):
+            app=self._app_from_text(text)
+            if app:
+                args['app']=app
+                plan.append({'op':'extract_app','source':'microreasoner','value':app})
         if skill in {'call_contact','send_whatsapp','send_sms'} and args.get('contact'):
             # Skip alias lookup only when the contact itself came from pronoun-based working memory.
             # Named contacts in follow-up commands (e.g. "send the same message to Govind")
