@@ -23,6 +23,10 @@ class Config:
     semantic_helper: str = ""
     semantic_helper_timeout: float = 0.35
     semantic_min_confidence: float = 0.75
+    minilm_socket: Path | None = None
+    minilm_timeout: float = 0.20
+    minilm_min_similarity: float = 0.45
+    minilm_min_margin: float = 0.10
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -30,6 +34,7 @@ class Config:
         pkg_skills = Path(__file__).resolve().parent.parent / "skills" / "builtin.json"
         model = Path(os.getenv("FASTBRAIN_SEMANTIC_MODEL", str(home / "models" / "semantic.onnx"))).expanduser()
         labels = Path(os.getenv("FASTBRAIN_SEMANTIC_LABELS", str(home / "models" / "semantic-labels.json"))).expanduser()
+        minilm_socket = Path(os.getenv("FASTBRAIN_MINILM_SOCKET", str(home / "minilm" / "minilm.sock"))).expanduser()
         return cls(
             home=home,
             db_path=Path(os.getenv("FASTBRAIN_DB", str(home / "fastbrain.db"))).expanduser(),
@@ -49,9 +54,14 @@ class Config:
             semantic_helper=os.getenv("FASTBRAIN_SEMANTIC_HELPER", "").strip(),
             semantic_helper_timeout=float(os.getenv("FASTBRAIN_SEMANTIC_HELPER_TIMEOUT", "0.35")),
             semantic_min_confidence=max(0.0,min(1.0,float(os.getenv("FASTBRAIN_SEMANTIC_MIN_CONFIDENCE","0.75")))),
+            minilm_socket=minilm_socket,
+            minilm_timeout=max(0.02, float(os.getenv("FASTBRAIN_MINILM_TIMEOUT", "0.20"))),
+            minilm_min_similarity=max(-1.0, min(1.0, float(os.getenv("FASTBRAIN_MINILM_MIN_SIMILARITY", "0.45")))),
+            minilm_min_margin=max(0.0, min(2.0, float(os.getenv("FASTBRAIN_MINILM_MIN_MARGIN", "0.10")))),
         )
 
     def ensure(self) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         (self.home / "models").mkdir(parents=True, exist_ok=True)
+        (self.home / "minilm").mkdir(parents=True, exist_ok=True)
