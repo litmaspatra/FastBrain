@@ -1,5 +1,5 @@
 from __future__ import annotations
-import math, re
+import hashlib,json,math,re
 from collections import Counter
 from .models import Decision
 
@@ -16,9 +16,69 @@ def cosine(a,b):
     return dot/(na*nb) if na and nb else 0.0
 
 class SemanticEngine:
-    """Small dependency-free semantic scorer. Replaceable by an ONNX backend later."""
-    def __init__(self, registry): self.registry=registry
+    """Dependency-free scorer with an optional tiny ONNX classifier backend.
+
+    ONNX is additive only: deterministic routing still happens before this class,
+    and failures/missing runtime/model always fall back to the n-gram scorer.
+    Expected model input: float32 [N, semantic_dim] hashed bag-of-features.
+    Expected model output: logits/probabilities [N, num_labels].
+    """
+    def __init__(self, registry, cfg=None):
+        self.registry=registry; self.cfg=cfg; self.session=None; self.labels=[]; self.onnx_error=''
+        self.backend='ngram'
+        if cfg is not None and cfg.semantic_backend in {'auto','onnx'}:
+            self._try_onnx()
+
+    def _try_onnx(self):
+        model=getattr(self.cfg,'semantic_model',None); labels=getattr(self.cfg,'semantic_labels',None)
+        if not model or not labels or not model.is_file() or not labels.is_file():
+            self.onnx_error='model_or_labels_missing'; return
+        try:
+            import onnxruntime as ort
+            loaded=json.loads(labels.read_text(encoding='utf-8'))
+            if isinstance(loaded,dict): loaded=loaded.get('labels',[])
+            if not isinstance(loaded,list) or not all(isinstance(x,str) for x in loaded): raise ValueError('invalid labels file')
+            self.session=ort.InferenceSession(str(model),providers=['CPUExecutionProvider'])
+            self.labels=loaded; self.backend='onnx'
+        except Exception as exc:
+            self.onnx_error=f'{type(exc).__name__}: {exc}'
+            self.session=None; self.labels=[]; self.backend='ngram'
+
+    def status(self):
+        return {'backend':self.backend,'onnx_ready':self.session is not None,'labels':len(self.labels),'error':self.onnx_error or None}
+
+    def _vector(self,text):
+        import numpy as np
+        dim=int(getattr(self.cfg,'semantic_dim',2048) or 2048); vec=np.zeros((1,dim),dtype='float32')
+        for key,value in features(text).items():
+            digest=hashlib.blake2b(key.encode('utf-8'),digest_size=8).digest(); idx=int.from_bytes(digest,'little')%dim
+            vec[0,idx]+=float(value)
+        n=float(np.linalg.norm(vec))
+        if n: vec/=n
+        return vec
+
+    @staticmethod
+    def _softmax(values):
+        m=max(values); ex=[math.exp(float(x)-m) for x in values]; total=sum(ex) or 1.0
+        return [x/total for x in ex]
+
+    def _onnx_choice(self,text,options=None):
+        if self.session is None:return None
+        try:
+            inp=self.session.get_inputs()[0].name; out=self.session.run(None,{inp:self._vector(text)})[0]
+            vals=out[0].tolist() if hasattr(out[0],'tolist') else list(out[0]); probs=self._softmax(vals)
+            scores={label:float(probs[i]) for i,label in enumerate(self.labels[:len(probs)]) if (not options or label in options) and self.registry.get(label)}
+            if not scores:return None
+            best=max(scores,key=scores.get); return Decision(best,min(.99,max(0.0,scores[best])),scores)
+        except Exception as exc:
+            self.onnx_error=f'{type(exc).__name__}: {exc}'; return None
+
     def route(self,text:str):
+        if self.session is not None:
+            decision=self._onnx_choice(text)
+            if decision is not None:
+                skill=self.registry.get(decision.choice); domain=skill.get('category','unknown') if skill else 'unknown'
+                return domain,decision,{domain:decision.confidence}
         q=features(text); domain_scores={}
         for domain in self.registry.domains():
             examples=[x for s in self.registry.all() if s.get('category')==domain for x in s.get('examples',[])]
@@ -26,7 +86,10 @@ class SemanticEngine:
         domain=max(domain_scores,key=domain_scores.get) if domain_scores else 'unknown'
         opts=[s['id'] for s in self.registry.all() if s.get('category')==domain]
         return domain,self.choice(text,opts),domain_scores
+
     def choice(self,text:str, options:list[str]|None=None)->Decision:
+        onnx=self._onnx_choice(text,options)
+        if onnx is not None:return onnx
         candidates=[s for s in self.registry.all() if not options or s['id'] in options]
         q=features(text); scores={}
         for s in candidates:
@@ -36,6 +99,7 @@ class SemanticEngine:
         best=max(scores,key=scores.get); raw=scores[best]
         conf=max(0.0,min(0.99,0.48+0.55*raw))
         return Decision(best,conf,scores)
+
     def boolean(self,text:str,positive:list[str],negative:list[str])->dict:
         q=features(text); p=max([cosine(q,features(x)) for x in positive] or [0]); n=max([cosine(q,features(x)) for x in negative] or [0]); den=p+n+1e-9
         yes=.5 if p==n==0 else p/den; return {'yes':yes,'no':1-yes}
