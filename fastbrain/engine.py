@@ -107,8 +107,10 @@ class FastBrain:
             m=re.match(r'^(?:message|text|tell)\s+(\S+)\s+(.+)$',t,re.I)
             if m:args={'contact':m.group(1),'message':m.group(2)}
         elif skill=='open_app':
-            m=re.match(r'^(?:open|launch)\s+(.+)$',t,re.I) or re.match(r'^(.+?)\s+(?:kholo|open karo)$',t,re.I)
-            if m:args['app']=m.group(1).strip()
+            patterns=[r'^(?:open|launch)\s+(.+)$',r'^(.+?)\s+(?:kholo|open karo)$',r'^(?:take me (?:into|to)|go to|switch to|bring up)\s+(.+)$']
+            for p in patterns:
+                m=re.match(p,t,re.I)
+                if m:args['app']=m.group(1).strip();break
         elif skill=='set_volume':
             m=re.search(r'volume(?:\s+to)?\s+(\d{1,3})',low)
             if m:args['level']=max(0,min(100,int(m.group(1))))
@@ -118,7 +120,8 @@ class FastBrain:
     def _deterministic(self,text):
         low=' '.join(text.lower().split());fixed={'torch on':'torch_on','turn torch on':'torch_on','torch jalao':'torch_on','torch off':'torch_off','turn torch off':'torch_off','torch band karo':'torch_off','battery':'battery_status','battery status':'battery_status','wifi status':'wifi_status','pause music':'pause_music','resume music':'resume_music'}
         if low in fixed:return fixed[low],.995
-        if re.match(r'^(?:open|launch)\s+.+$',low) or re.match(r'^.+\s+(?:kholo|open karo)$',low):return 'open_app',.98
+        if re.search(r'\b(?:battery|charge)\b',low) and re.search(r'\b(?:how much|how many|left|remaining|status|level|percent|percentage|kitni|kitna)\b',low):return 'battery_status',.995
+        if re.match(r'^(?:open|launch|take me (?:into|to)|go to|switch to|bring up)\s+.+$',low) or re.match(r'^.+\s+(?:kholo|open karo)$',low):return 'open_app',.98
         if re.match(r'^(?:call|phone|ring)\s+.+$',low) or re.match(r'^.+\s+ko\s+(?:call|phone)',low):return 'call_contact',.98
         if re.search(r'\bvolume(?:\s+to)?\s+\d{1,3}\b',low) and not any(x in low for x in ('play ','music','song')):return 'set_volume',.98
         return None,0
