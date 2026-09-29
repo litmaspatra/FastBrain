@@ -69,6 +69,11 @@ def main():
     probe.add_argument("--scope", default="")
     probe.add_argument("--promote", action="store_true")
 
+    warm = sub.add_parser("memory-warm")
+    warm.add_argument("type")
+    warm.add_argument("subject")
+    warm.add_argument("--scope", default="")
+
     debug = sub.add_parser("memory-debug")
     debug.add_argument("type")
     debug.add_argument("subject")
@@ -195,6 +200,10 @@ def main():
 
     if args.cmd == "memory-debug":
         print(json.dumps(stack["memory"].debug_direct(args.type,args.subject,args.scope),indent=2,ensure_ascii=False)); return 0
+
+    if args.cmd == "memory-warm":
+        payload=stack["memory"].warm(args.type,args.subject,args.scope)
+        print(json.dumps(payload,indent=2,ensure_ascii=False)); return 0 if payload.get("ok") else 3
 
     if args.cmd == "memory-probe":
         memory=stack["memory"]; direct=memory.lookup_direct(args.type,args.subject,args.scope)
