@@ -22,6 +22,16 @@ class MicroReasoner:
         return [p.strip() for p in parts if p.strip()]
 
     @staticmethod
+    def _split_communication_actions(text):
+        # Communication message bodies may legitimately contain "and", so only
+        # split on stronger sequencing markers here.
+        parts=re.split(
+            r'\s*(?:,|\band\s+then\b|\bthen\b|\band\s+after\s+that\b|\bafter\s+that\b|\bnext\b)\s*',
+            text.strip(), flags=re.I,
+        )
+        return [p.strip() for p in parts if p.strip()]
+
+    @staticmethod
     def _low_risk_clause(clause, state=None):
         state=state or {}
         c=' '.join(clause.strip().split())
@@ -52,6 +62,20 @@ class MicroReasoner:
             vague={'music','some music','something','something nice','something good','something i would like','something suitable'}
             return {'skill':'play_music','arguments':({} if q.lower() in vague else {'query':q}),'source':'microreasoner'}
         return None
+
+    @staticmethod
+    def _communication_followup_clause(clause, state=None):
+        state=state or {}
+        c=' '.join(clause.strip().split())
+        low=c.lower()
+        contact=state.get('contact')
+        if contact and low in {'call him','call her','call them','phone him','phone her','phone them','ring him','ring her','ring them'}:
+            return {'skill':'call_contact','arguments':{'contact':contact},'source':'plan_context'}
+        if contact:
+            m=re.match(r'^(?:message|whatsapp|text)\s+(?:him|her|them)\s+(.+)$',c,re.I)
+            if m:
+                return {'skill':'send_whatsapp','arguments':{'contact':contact,'message':m.group(1).strip()},'source':'plan_context'}
+        return MicroReasoner._low_risk_clause(c,state)
 
     @staticmethod
     def _update_plan_state(state, skill, arguments):
@@ -89,6 +113,7 @@ class MicroReasoner:
                 r'^(?:please\s+)?(?:send|drop)\s+(.+?)\s+(?:a\s+)?(?:whatsapp\s+)?message\s+(?:that\s+|saying\s+)?(.+)$',
                 r'^(?:please\s+)?send\s+(?:a\s+)?whatsapp\s+(?:message\s+)?to\s+(.+?)\s+(?:that|saying)\s+(.+)$',
                 r'^(?:please\s+)?(?:text|sms)\s+(.+?)\s+(?:that|saying)\s+(.+)$',
+                r'^(?:message|whatsapp|text)\s+(\S+)\s+(.+)$',
             ]
             for pattern in patterns:
                 m=re.match(pattern,t,re.I)
@@ -101,10 +126,21 @@ class MicroReasoner:
 
     def build(self,text,skill,args):
         plan=[]; low=' '.join(text.lower().split())
-        args,extraction_plan=self._natural_communication(text,skill,args)
+        comm_parts=self._split_communication_actions(text) if skill in {'send_whatsapp','send_sms'} else []
+        parse_text=comm_parts[0] if len(comm_parts)>1 else text
+        # When a communication command has sequenced follow-ups, re-parse only
+        # the first clause so the message body does not absorb the later actions.
+        if len(comm_parts)>1:
+            parsed,extraction_plan=self._natural_communication(parse_text,skill,{})
+            if parsed:
+                args.update(parsed)
+            else:
+                args,extraction_plan=self._natural_communication(parse_text,skill,args)
+        else:
+            args,extraction_plan=self._natural_communication(text,skill,args)
         plan.extend(extraction_plan)
 
-        if skill in {'send_whatsapp','send_sms'} and args.get('message'):
+        if skill in {'send_whatsapp','send_sms'} and args.get('message') and len(comm_parts)<=1:
             m=re.match(r'^(.*?)(?:\s+and\s+then\s+|\s+then\s+)(?:open|launch)\s+([\w .+-]+?)\s*$',str(args['message']),re.I)
             if m and m.group(1).strip() and m.group(2).strip():
                 args['message']=m.group(1).strip(' ,')
@@ -177,6 +213,17 @@ class MicroReasoner:
                             plan.append({'op':'extract_app','source':'microreasoner','value':app})
                             break
 
+        # Communication compounds reuse the canonical contact resolved above.
+        if len(comm_parts)>1 and skill in {'send_whatsapp','send_sms'}:
+            state=self._update_plan_state({},skill,args)
+            for clause in comm_parts[1:]:
+                step=self._communication_followup_clause(clause,state)
+                if not step:
+                    plan.append({'op':'hermes_clause','text':clause,'source':'planner','deferred':True})
+                    continue
+                plan.append(step)
+                self._update_plan_state(state,step['skill'],step.get('arguments'))
+
         # Generic ordered low-risk follow-ups. Seed state from the already parsed
         # primary action so later clauses can refer to it using "it/this".
         parts=self._split_actions(text)
@@ -184,7 +231,9 @@ class MicroReasoner:
             state=self._update_plan_state({},skill,args)
             for clause in parts[1:]:
                 step=self._low_risk_clause(clause,state)
-                if not step:continue
+                if not step:
+                    plan.append({'op':'hermes_clause','text':clause,'source':'planner','deferred':True})
+                    continue
                 if step['skill']=='play_music' and not step['arguments'].get('query'):
                     mc=self.context.music_context(); chosen=self.context.choose_music_from_history(mc.get('history_candidates') or [])
                     step['arguments']['query']=str(chosen['query']) if chosen else (str(mc.get('preference')) if mc.get('preference') else 'popular songs')
