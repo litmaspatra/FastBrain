@@ -10,26 +10,43 @@ OUT="$VENV/model"
 command -v "$PY" >/dev/null || { echo "ERROR: python3.13 is required"; exit 2; }
 [ -f "$TRAINING" ] || { echo "ERROR: training file not found: $TRAINING"; exit 2; }
 
+# We deliberately reuse Termux's already-working packaged NumPy via
+# --system-site-packages. The venv itself remains isolated under ~/.fastbrain-onnx-test.
+# Nothing is installed into system Python.
 mkdir -p "$VENV"
-if [ ! -x "$VENV/venv/bin/python" ]; then
-  "$PY" -m venv "$VENV/venv"
+if [ -d "$VENV/venv" ]; then
+  rm -rf "$VENV/venv"
 fi
+"$PY" -m venv --system-site-packages "$VENV/venv"
 
 PIP="$VENV/venv/bin/pip"
 VPY="$VENV/venv/bin/python"
 
-# This install is isolated to ~/.fastbrain-onnx-test. It never touches system Python,
-# ~/.fastbrain, Hermes, OmniRoute, or Hindsight.
-"$PIP" install --upgrade pip >/dev/null
+if ! "$VPY" - <<'PY' >/dev/null 2>&1
+import numpy
+print(numpy.__version__)
+PY
+then
+  cat <<EOF
+ONNX_TEST_UNAVAILABLE
+The isolated Python 3.13 venv could not see the existing Termux NumPy package.
+Nothing outside $VENV was changed.
+EOF
+  exit 4
+fi
 
+# Install only the ONNX-specific pieces in the isolated venv. Do not ask pip for
+# NumPy, because PyPI does not provide an Android/Bionic wheel for this platform.
+"$PIP" install --upgrade pip >/dev/null
 set +e
-"$PIP" install --only-binary=:all: numpy onnx onnxruntime
+"$PIP" install --only-binary=:all: onnx onnxruntime
 INSTALL_RC=$?
 set -e
 if [ "$INSTALL_RC" -ne 0 ]; then
   cat <<EOF
 ONNX_TEST_UNAVAILABLE
-The isolated environment could not install a binary onnxruntime/onnx stack for this Android/Termux platform.
+Termux NumPy is visible, but pip could not install a binary onnx/onnxruntime stack for Android/Bionic.
+This is now an ONNX platform-availability result rather than a NumPy failure.
 Nothing outside $VENV was changed.
 EOF
   exit 4
@@ -40,7 +57,7 @@ mkdir -p "$OUT"
 "$VPY" "$ROOT/scripts/train-semantic.py" "$TRAINING" --output-dir "$OUT"
 
 "$VPY" - "$OUT/semantic.onnx" "$OUT/labels.json" "$TRAINING" <<'PY'
-import hashlib,json,math,re,sys,time
+import hashlib,json,re,sys,time
 from collections import Counter
 from pathlib import Path
 import numpy as np
