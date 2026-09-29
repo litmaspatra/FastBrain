@@ -84,13 +84,15 @@ class ContextEngine:
         if skill in {"play_music", "choose_music_from_context"} and arguments.get("query"):
             self.db.work_set("music_query", "last", arguments["query"])
             self.remember_entity("track", arguments["query"])
+            # remember_action() is called only after successful execution, making
+            # this a clean source for persistent listening-history learning.
+            self.db.music_history_record(arguments["query"], arguments.get("player") or "simpmusic", True)
 
     def time_bucket(self):
         h = time.localtime().tm_hour
         return "morning" if 5 <= h < 12 else "afternoon" if 12 <= h < 17 else "evening" if 17 <= h < 22 else "night"
 
     def music_history_candidates(self, limit=8):
-        """Rank successful past music queries, penalizing the most recent repeats."""
         rows=self.db.music_history(max(12,limit*2))
         if not rows:
             return []
@@ -102,9 +104,6 @@ class ContextEngine:
             success_rate=float(row.get('success_rate') or 0.0)
             last=float(row.get('last_played_at') or 0.0)
             age=max(0.0,now-last)
-            # Frequency matters most; successful history gets a bonus. Very recent
-            # plays are temporarily penalized so vague requests don't repeat the
-            # exact same song/query over and over.
             score=(successes*2.0)+(success_rate*2.0)+min(3.0,plays*0.25)
             if age < 600:
                 score-=3.0
