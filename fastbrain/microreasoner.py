@@ -13,16 +13,31 @@ class MicroReasoner:
 
     @staticmethod
     def _split_actions(text):
-        # Deliberately constrained: split only on explicit sequencing punctuation/
-        # conjunctions and cap later in build(). Message bodies are handled by
-        # the communication-specific parser before this generic planner.
-        parts=re.split(r'\s*(?:,|\band\s+then\b|\bthen\b|\band\b)\s*', text.strip(), flags=re.I)
+        # Explicit sequencing only. Natural fillers such as "after that" and
+        # "next" are accepted, but ordinary prose is not split aggressively.
+        parts=re.split(
+            r'\s*(?:,|\band\s+then\b|\bthen\b|\band\s+after\s+that\b|\bafter\s+that\b|\bnext\b|\band\b)\s*',
+            text.strip(), flags=re.I,
+        )
         return [p.strip() for p in parts if p.strip()]
 
     @staticmethod
-    def _low_risk_clause(clause):
+    def _low_risk_clause(clause, state=None):
+        state=state or {}
         c=' '.join(clause.strip().split())
         low=c.lower()
+
+        # Same-command referents are resolved from the plan state, never from
+        # stale global working memory.
+        if low in {'open it','open it again','launch it','launch it again'} and state.get('app'):
+            return {'skill':'open_app','arguments':{'app':state['app']},'source':'plan_context'}
+        if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on (?:yt music|youtube music)',low) and state.get('music_query'):
+            return {'skill':'play_music','arguments':{'query':state['music_query'],'player':'ytmusic'},'source':'plan_context'}
+        if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on simpmusic',low) and state.get('music_query'):
+            return {'skill':'play_music','arguments':{'query':state['music_query'],'player':'simpmusic'},'source':'plan_context'}
+        if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on youtube',low) and state.get('media_query'):
+            return {'skill':'play_video','arguments':{'query':state['media_query'],'player':'youtube','latest':False},'source':'plan_context'}
+
         m=re.match(r'^(?:open|launch)\s+(.+)$',c,re.I)
         if m:return {'skill':'open_app','arguments':{'app':m.group(1).strip()},'source':'microreasoner'}
         m=re.match(r'^(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})$',c,re.I)
@@ -37,6 +52,21 @@ class MicroReasoner:
             vague={'music','some music','something','something nice','something good','something i would like','something suitable'}
             return {'skill':'play_music','arguments':({} if q.lower() in vague else {'query':q}),'source':'microreasoner'}
         return None
+
+    @staticmethod
+    def _update_plan_state(state, skill, arguments):
+        arguments=arguments or {}
+        if skill=='open_app' and arguments.get('app'):
+            state['app']=arguments['app']
+        if skill in {'play_music','choose_music_from_context'} and arguments.get('query'):
+            state['music_query']=arguments['query']
+            state['media_query']=arguments['query']
+            if arguments.get('player'):state['music_player']=arguments['player']
+        if skill=='play_video' and arguments.get('query'):
+            state['media_query']=arguments['query']
+        if skill in {'call_contact','send_whatsapp','send_sms'} and arguments.get('contact'):
+            state['contact']=arguments['contact']
+        return state
 
     def _natural_communication(self,text,skill,args):
         t=' '.join(text.strip().split())
@@ -130,8 +160,6 @@ class MicroReasoner:
             plan.append({'op':'choose_music','context':mc,'player':args['player'],'query':args['query']})
 
         if skill=='open_app':
-            # If the primary app extraction swallowed later compound clauses,
-            # keep only the first explicit app name.
             m=re.match(r'^(?:open|launch)\s+(.+?)(?=\s*(?:,|\band\s+then\b|\bthen\b|\band\b)|$)',text.strip(),re.I)
             if m:
                 args['app']=m.group(1).strip(' .,!?:;')
@@ -149,18 +177,20 @@ class MicroReasoner:
                             plan.append({'op':'extract_app','source':'microreasoner','value':app})
                             break
 
-        # Generic ordered low-risk follow-ups. The engine classifies the first
-        # action clause; everything after it becomes a bounded plan here.
+        # Generic ordered low-risk follow-ups. Seed state from the already parsed
+        # primary action so later clauses can refer to it using "it/this".
         parts=self._split_actions(text)
         if len(parts)>1 and skill not in {'send_whatsapp','send_sms'}:
+            state=self._update_plan_state({},skill,args)
             for clause in parts[1:]:
-                step=self._low_risk_clause(clause)
+                step=self._low_risk_clause(clause,state)
                 if not step:continue
                 if step['skill']=='play_music' and not step['arguments'].get('query'):
                     mc=self.context.music_context(); chosen=self.context.choose_music_from_history(mc.get('history_candidates') or [])
                     step['arguments']['query']=str(chosen['query']) if chosen else (str(mc.get('preference')) if mc.get('preference') else 'popular songs')
                     step['arguments']['player']=(chosen.get('player') if chosen else None) or 'simpmusic'
                 plan.append(step)
+                self._update_plan_state(state,step['skill'],step.get('arguments'))
 
         m=re.search(r'\b(?:and\s+)?(?:then\s+)?(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})\b',low)
         if m and skill in {'play_music','choose_music_from_context'} and not any(p.get('skill')=='set_volume' for p in plan):
