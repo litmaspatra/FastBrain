@@ -148,6 +148,7 @@ class FastBrain:
     def _deterministic(self,text):
         low=' '.join(text.lower().split());fixed={'torch on':'torch_on','turn torch on':'torch_on','torch jalao':'torch_on','torch off':'torch_off','turn torch off':'torch_off','torch band karo':'torch_off','battery':'battery_status','battery status':'battery_status','wifi status':'wifi_status','pause music':'pause_music','resume music':'resume_music'}
         if low in fixed:return fixed[low],.995
+        if re.match(r'^(?:check|show|get)\s+(?:my\s+|the\s+)?battery\b',low):return 'battery_status',.995
         for phrase in sorted(fixed,key=len,reverse=True):
             if not low.startswith(phrase):
                 continue
