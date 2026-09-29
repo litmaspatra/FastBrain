@@ -36,10 +36,12 @@ class FastBrain:
         if m:return 'send_sms',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
         if low in {'send the same message by sms','send same message by sms','send it by sms'}:
             if recent_person and recent_message:return 'send_sms',.995,{'contact':recent_person,'message':recent_message},'working_memory'
+        m=re.match(r'^(?:send\s+)?(?:a\s+)?(?:whatsapp|whatsapp\s+message)\s+to\s+([^\s]+)\s+(?:saying|that)\s+(.+)$',t,re.I)
+        if m:return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
         m=re.match(r'^(?:message|whatsapp)\s+([^\s]+)\s+(.+)$',t,re.I)
         if m:return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
         m=re.match(r'^send\s+([^\s]+)\s+(.+)$',t,re.I)
-        if m and m.group(1).lower() not in {'it','that','this','the','same','sms'}:
+        if m and m.group(1).lower() not in {'a','an','it','that','this','the','same','sms','whatsapp'}:
             return 'send_whatsapp',.995,{'contact':m.group(1).strip(),'message':m.group(2).strip()},'deterministic'
         m=re.match(r'^send\s+(.+?)\s+to\s+([^\s]+)$',t,re.I)
         if m and m.group(1).lower() not in {'it','that','this','the same message','same message'}:
@@ -145,6 +147,9 @@ class FastBrain:
                 if recent:args['contact']=recent;reason='working_memory'
             args,plan=self.micro.build(text,skill,args)
             if reason=='working_memory':plan=[{'op':'resolve_followup','source':'working_memory'}]+list(plan or [])
+            if skill in {'call_contact','send_whatsapp','send_sms'} and reason=='semantic' and conf>=self.cfg.context_threshold:
+                trusted_contact=any(p.get('op')=='resolve_contact' and p.get('source') in {'hot','working_memory'} for p in (plan or []))
+                if trusted_contact:conf=max(conf,.965)
             required=[k for k,v in needs.items() if v.get('required')];missing=[x for x in required if not args.get(x)]
             risk=s.get('risk','low');threshold=max(self.cfg.execute_threshold,0.96 if risk=='medium' else self.cfg.execute_threshold)
             if missing:r=RouteResult('hermes',s.get('category','unknown'),skill,args,conf,'missing_arguments:'+','.join(missing),plan=plan)
