@@ -44,48 +44,65 @@ class MiniLM:
         if 'token_type_ids' in self.input_names:feeds['token_type_ids']=np.zeros_like(ids)
         output=self.session.run(None,feeds)[0];weights=mask[...,None].astype(np.float32);pooled=(output*weights).sum(axis=1)/np.clip(weights.sum(axis=1),1e-9,None);pooled/=np.clip(np.linalg.norm(pooled,axis=1,keepdims=True),1e-9,None);return pooled.astype(np.float32)
 
+def _eligible_candidate(row):
+    try:
+        definition=json.loads(row['definition']);risk=definition.get('risk','low')
+        return risk!='high' and row['successes']>=2 and row['score']>=0.8 and row['status'] in {'eligible','promoted'}
+    except Exception:return False
+
 def load_examples(skills_path:Path,db_path:Path):
     skills=json.loads(skills_path.read_text(encoding='utf-8')) if skills_path.exists() else []
+    candidate_rows=[]
     if db_path.exists():
         try:
             con=sqlite3.connect(db_path);con.row_factory=sqlite3.Row
             for row in con.execute('SELECT definition FROM learned_skills WHERE enabled=1'):
                 try:skills.append(json.loads(row['definition']))
                 except Exception:pass
+            candidate_rows=list(con.execute("SELECT id,phrase,definition,successes,score,status FROM learning_candidates WHERE status IN ('eligible','promoted')"))
             con.close()
         except Exception:pass
-    rows=[]
+    rows=[];seen=set()
     for skill in skills:
         sid=skill.get('id')
         if not sid or sid=='normal_hermes':continue
         for ex in skill.get('examples',[]):
-            if isinstance(ex,str) and ex.strip():rows.append((sid,ex.strip()))
+            if isinstance(ex,str) and ex.strip():
+                key=(sid,ex.strip().lower())
+                if key not in seen:rows.append((sid,ex.strip()));seen.add(key)
+    # Repeated successful real-world phrases become semantic examples only after
+    # the learner has already judged them eligible/promoted. This avoids letting
+    # a one-off bad route poison MiniLM.
+    for row in candidate_rows:
+        if not _eligible_candidate(row):continue
+        try:definition=json.loads(row['definition'])
+        except Exception:continue
+        sid=definition.get('id') or row['id'];phrase=str(row['phrase'] or '').strip()
+        if not sid or sid=='normal_hermes' or not phrase:continue
+        key=(sid,phrase.lower())
+        if key not in seen:rows.append((sid,phrase));seen.add(key)
     return rows
 
-def learned_skills_fingerprint(db_path:Path):
-    """Fingerprint only learned skill definitions, not unrelated DB writes.
-
-    FastBrain writes route_log/experience frequently. Watching the SQLite file
-    mtime made every route look like a skill change and forced a full MiniLM
-    reindex on the following request. Hashing only learned_skills keeps dynamic
-    skill reloads while ordinary telemetry writes remain cheap.
-    """
+def semantic_learning_fingerprint(db_path:Path):
+    """Fingerprint only data that can change MiniLM's semantic index."""
     if not db_path.exists():return 'missing'
     try:
-        con=sqlite3.connect(db_path)
-        rows=con.execute('SELECT enabled, definition FROM learned_skills ORDER BY rowid').fetchall()
-        con.close()
-        h=hashlib.sha256()
-        for enabled,definition in rows:
-            h.update(str(int(bool(enabled))).encode('ascii'));h.update(b'\0')
-            h.update(str(definition or '').encode('utf-8'));h.update(b'\0')
+        con=sqlite3.connect(db_path);con.row_factory=sqlite3.Row
+        learned=list(con.execute('SELECT enabled,definition FROM learned_skills ORDER BY rowid'))
+        candidates=list(con.execute("SELECT id,phrase,definition,successes,score,status FROM learning_candidates WHERE status IN ('eligible','promoted') ORDER BY id"))
+        con.close();h=hashlib.sha256()
+        for row in learned:
+            h.update(str(int(bool(row['enabled']))).encode('ascii'));h.update(b'\0');h.update(str(row['definition'] or '').encode('utf-8'));h.update(b'\0')
+        for row in candidates:
+            if not _eligible_candidate(row):continue
+            for key in ('id','phrase','definition','successes','score','status'):
+                h.update(str(row[key]).encode('utf-8'));h.update(b'\0')
         return h.hexdigest()
-    except Exception as exc:
-        return 'error:'+type(exc).__name__
+    except Exception as exc:return 'error:'+type(exc).__name__
 
 class SemanticIndex:
     def __init__(self,model:MiniLM,skills_path:Path,db_path:Path):self.model=model;self.skills_path=skills_path;self.db_path=db_path;self.stamp=None;self.reload()
-    def _stamp(self):return (self.skills_path.stat().st_mtime_ns if self.skills_path.exists() else 0,learned_skills_fingerprint(self.db_path))
+    def _stamp(self):return (self.skills_path.stat().st_mtime_ns if self.skills_path.exists() else 0,semantic_learning_fingerprint(self.db_path))
     def reload(self):
         self.examples=load_examples(self.skills_path,self.db_path)
         if not self.examples:raise RuntimeError('no skill examples found')
