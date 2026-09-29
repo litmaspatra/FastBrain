@@ -9,6 +9,8 @@ import time
 from difflib import SequenceMatcher
 from pathlib import Path
 
+from .models import RouteResult
+
 
 class Executor:
     """Execute FastBrain skills while reusing the working Hermes Android layer."""
@@ -172,6 +174,29 @@ class Executor:
             return [str(dispatcher), "note", "create", "FastBrain", str(text)], "phone_dispatcher"
         return None, None
 
+    def _prepare_followups(self, result):
+        """Resolve only explicit low-risk secondary skill steps from a plan."""
+        out=[]
+        for step in result.plan or []:
+            sid=step.get('skill')
+            if not sid:
+                continue
+            skill=self.registry.get(sid)
+            if not skill or skill.get('risk','low')!='low':
+                out.append({'skill':sid,'allowed':False,'reason':'secondary_skill_not_low_risk'})
+                continue
+            args=dict(step.get('arguments') or {})
+            required=[k for k,v in (skill.get('arguments') or {}).items() if v.get('required')]
+            missing=[k for k in required if not args.get(k)]
+            if missing:
+                out.append({'skill':sid,'allowed':False,'reason':'missing_arguments:'+','.join(missing)})
+                continue
+            rr=RouteResult('local',skill.get('category','unknown'),sid,args,.995,'compound_followup',step.get('source','microreasoner'),[])
+            argv=self.registry.render_command(skill,args)
+            resolved,source=self._resolve_command(rr,argv or []) if argv else (None,None)
+            out.append({'skill':sid,'allowed':bool(resolved),'arguments':args,'command':resolved,'executor_source':source,'result':rr,'timeout':float(skill.get('timeout',8))})
+        return out
+
     def execute(self, result, dry_run=False):
         if result.route != "local":
             return {"executed": False, "route": result.route, "reason": result.reason}
@@ -200,6 +225,9 @@ class Executor:
                 "dispatcher": str(Path.home() / "hermes-phone" / "bin" / "phone"),
             }
 
+        followups=self._prepare_followups(result)
+        visible_followups=[{k:v for k,v in f.items() if k not in {'result','timeout'}} for f in followups]
+
         if dry_run:
             return {
                 "executed": False,
@@ -207,6 +235,7 @@ class Executor:
                 "command": resolved,
                 "executor_source": source,
                 "contact_guard": contact_guard,
+                "followups": visible_followups,
             }
 
         started = time.perf_counter()
@@ -215,9 +244,34 @@ class Executor:
             latency_ms = (time.perf_counter() - started) * 1000
             ok = proc.returncode == 0
             self.experience.record(result.skill, ok, latency_ms)
+            followup_results=[]
+            if ok:
+                for item in followups:
+                    if not item.get('allowed') or not item.get('command'):
+                        followup_results.append({k:v for k,v in item.items() if k not in {'result','timeout'}})
+                        continue
+                    fstart=time.perf_counter()
+                    try:
+                        fp=subprocess.run(item['command'],timeout=item['timeout'],capture_output=True,text=True)
+                        flatency=(time.perf_counter()-fstart)*1000
+                        fok=fp.returncode==0
+                        self.experience.record(item['skill'],fok,flatency)
+                        followup_results.append({'skill':item['skill'],'executed':True,'success':fok,'returncode':fp.returncode,'latency_ms':flatency,'command':item['command'],'executor_source':item['executor_source'],'stdout':fp.stdout[-500:],'stderr':fp.stderr[-500:]})
+                        if not fok:
+                            ok=False
+                            break
+                    except Exception as fexc:
+                        flatency=(time.perf_counter()-fstart)*1000
+                        self.experience.record(item['skill'],False,flatency)
+                        followup_results.append({'skill':item['skill'],'executed':True,'success':False,'latency_ms':flatency,'command':item.get('command'),'error':str(fexc)})
+                        ok=False
+                        break
             if ok and self.context is not None:
                 self.context.clear_pending_confirmation()
                 self.context.remember_action(result.skill, result.arguments)
+                for item in followups:
+                    if item.get('allowed') and item.get('result'):
+                        self.context.remember_action(item['skill'], item['result'].arguments)
             return {
                 "executed": True,
                 "success": ok,
@@ -228,6 +282,7 @@ class Executor:
                 "stdout": proc.stdout[-1000:],
                 "stderr": proc.stderr[-1000:],
                 "contact_guard": contact_guard,
+                "followups": followup_results,
             }
         except Exception as exc:
             latency_ms = (time.perf_counter() - started) * 1000
@@ -240,4 +295,5 @@ class Executor:
                 "command": resolved,
                 "error": str(exc),
                 "contact_guard": contact_guard,
+                "followups": [],
             }
