@@ -108,6 +108,7 @@ def export_onnx(model_path: Path, weights, bias, dim: int):
     ]
     graph = helper.make_graph(nodes, "FastBrainSemantic", [inp], [out], [w_init, b_init])
     model = helper.make_model(graph, producer_name="fastbrain", opset_imports=[helper.make_opsetid("", 13)])
+    model.ir_version = 13
     onnx.checker.check_model(model)
     model_path.parent.mkdir(parents=True, exist_ok=True)
     onnx.save(model, model_path)
@@ -139,6 +140,8 @@ def main():
         "epochs": args.epochs,
         "train_accuracy": train_acc,
         "feature_hash": "blake2b-64-mod-dim",
+        "onnx_ir_version": 13,
+        "onnx_opset": 13,
     }
     (out / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
