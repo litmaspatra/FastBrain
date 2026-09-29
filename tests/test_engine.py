@@ -45,3 +45,35 @@ def test_same_message_to_new_contact():
     s=stack();s['context'].remember_action('send_whatsapp',{'contact':'butagorira','message':'Meeting at 5'})
     s['memory'].project({'type':'alias','subject':'ravi','value':'ravi','scope':'communication'})
     r=s['engine'].route('send the same message to Ravi');assert r.route=='local';assert r.skill=='send_whatsapp';assert r.arguments['contact']=='ravi';assert r.arguments['message']=='Meeting at 5'
+
+def test_battery_condition_is_deterministic():
+    s=stack();r=s['engine'].route("check battery and if it's below 20 open battery settings")
+    assert r.route=='local';assert r.skill=='battery_status';assert r.reason=='deterministic';assert r.confidence>=.99
+    c=next(p for p in r.plan if p.get('op')=='conditional');assert c['conditions'][0]['source_result']=='battery_status';assert c['conditions'][0]['operator']=='lt';assert c['conditions'][0]['threshold']==20
+
+def test_charging_condition_with_else():
+    s=stack();r=s['engine'].route("check battery and if it's charging set volume to 30 otherwise set volume to 20")
+    c=next(p for p in r.plan if p.get('op')=='conditional');assert c['conditions']==[{'source_result':'battery_charging','operator':'eq','threshold':True}]
+    assert c['then']['skill']=='set_volume' and c['then']['arguments']['level']==30
+    assert c['else']['skill']=='set_volume' and c['else']['arguments']['level']==20
+
+def test_wifi_condition_is_deterministic():
+    s=stack();r=s['engine'].route('check wifi and if wifi is connected open Maps otherwise do nothing')
+    assert r.route=='local';assert r.skill=='wifi_status';assert r.reason=='deterministic'
+    c=next(p for p in r.plan if p.get('op')=='conditional');assert c['conditions'][0]['source_result']=='wifi_connected';assert c['else']['op']=='noop'
+
+def test_compound_conditional_branch_is_bounded_sequence():
+    s=stack();r=s['engine'].route("check battery and if it's below 20 open battery settings and set volume to 20")
+    c=next(p for p in r.plan if p.get('op')=='conditional');seq=c['then'];assert seq['op']=='sequence';assert len(seq['steps'])==2
+    assert seq['steps'][0]['skill']=='open_app';assert seq['steps'][1]['skill']=='set_volume'
+
+def test_combined_battery_conditions_reuse_one_source_read():
+    s=stack();r=s['engine'].route("check battery and if it's below 20 and not charging open battery settings otherwise do nothing")
+    c=next(p for p in r.plan if p.get('op')=='conditional')
+    assert c['conditions'][0]=={'source_result':'battery_status','operator':'lt','threshold':20}
+    assert c['conditions'][1]=={'source_result':'battery_charging','operator':'eq','threshold':False}
+    assert c['then']['skill']=='open_app';assert c['else']['op']=='noop'
+
+def test_unclear_step_inside_branch_stays_deferred():
+    s=stack();r=s['engine'].route("check battery and if it's below 20 open Maps and do something clever there")
+    c=next(p for p in r.plan if p.get('op')=='conditional');seq=c['then'];assert seq['op']=='sequence';assert seq['steps'][0]['skill']=='open_app';assert seq['steps'][1]['op']=='hermes_clause'
