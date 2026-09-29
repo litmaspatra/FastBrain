@@ -13,6 +13,7 @@ class ContextEngine:
         "media_player": 1800,
         "music_query": 1800,
         "track": 3600,
+        "auto_music": 1800,
     }
 
     def __init__(self, db, memory):
@@ -132,8 +133,6 @@ class ContextEngine:
             score=(successes*2.0)+(success_rate*2.0)+min(3.0,plays*0.25)+min(4.0,requests*0.75)
             last=max(item['last_played_at'],item['last_requested_at'])
             age=max(0.0,now-last) if last else 999999.0
-            # Avoid immediately repeating the most recent request, but only mildly:
-            # request history is weaker evidence than a successful play.
             if item['last_played_at'] and age < 600:
                 score-=3.0
             elif item['last_played_at'] and age < 1800:
@@ -146,6 +145,28 @@ class ContextEngine:
         scored.sort(key=lambda x:(x['score'],x['successes'],x['requests'],max(x['last_played_at'],x['last_requested_at'])),reverse=True)
         return scored[:limit]
 
+    def choose_music_from_history(self, history):
+        if not history:
+            return None
+        recent_auto={str(x).lower() for x in self.recent_values('auto_music', 2)}
+        # Collapse duplicate song queries across players. Song preference and
+        # player preference are different signals; select the strongest player
+        # only after choosing the song.
+        songs={}
+        for item in history:
+            query=str(item.get('query') or '').strip()
+            if not query:
+                continue
+            key=query.lower()
+            current=songs.get(key)
+            if current is None or float(item.get('score') or 0)>float(current.get('score') or 0):
+                songs[key]=item
+        ranked=sorted(songs.values(), key=lambda x:(float(x.get('score') or 0), int(x.get('successes') or 0), int(x.get('requests') or 0)), reverse=True)
+        chosen=next((x for x in ranked if str(x.get('query') or '').lower() not in recent_auto), ranked[0] if ranked else None)
+        if chosen:
+            self.remember_entity('auto_music', chosen['query'])
+        return chosen
+
     def music_context(self):
         bucket = self.time_bucket()
         m = self.memory.lookup_hot("preference", bucket, "music")
@@ -156,6 +177,7 @@ class ContextEngine:
             "time_of_day": bucket,
             "preference": m.get("value") if m else None,
             "recent_tracks": self.recent_values("track", 5),
+            "recent_auto_choices": self.recent_values("auto_music", 2),
             "history_candidates": [
                 {
                     "query":x.get("query"),"player":x.get("player"),
