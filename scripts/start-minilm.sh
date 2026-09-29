@@ -1,10 +1,11 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 FB_HOME="${FASTBRAIN_HOME:-$HOME/.fastbrain}"
-MODEL="$FB_HOME/minilm/model_qint8_arm64.onnx"
-VOCAB="$FB_HOME/minilm/vocab.txt"
+MODEL="${FASTBRAIN_MINILM_MODEL:-$FB_HOME/minilm/model_qint8_arm64.onnx}"
+VOCAB="${FASTBRAIN_MINILM_VOCAB:-$FB_HOME/minilm/vocab.txt}"
 SKILLS="$FB_HOME/app/skills/builtin.json"
-SOCK="$FB_HOME/minilm/minilm.sock"
+DB="${FASTBRAIN_DB:-$FB_HOME/fastbrain.db}"
+SOCK="${FASTBRAIN_MINILM_SOCKET:-$FB_HOME/minilm/minilm.sock}"
 PIDFILE="$FB_HOME/minilm/minilm.pid"
 LOG="$FB_HOME/minilm/minilm.log"
 PY="${FASTBRAIN_MINILM_PYTHON:-python3.14}"
@@ -25,7 +26,7 @@ if [ -f "$PIDFILE" ]; then
   rm -f "$PIDFILE"
 fi
 rm -f "$SOCK"
-nohup "$PY" "$SERVICE" --model "$MODEL" --vocab "$VOCAB" --skills "$SKILLS" --socket "$SOCK" >"$LOG" 2>&1 &
+nohup "$PY" "$SERVICE" --model "$MODEL" --vocab "$VOCAB" --skills "$SKILLS" --db "$DB" --socket "$SOCK" >"$LOG" 2>&1 &
 pid=$!
 echo "$pid" > "$PIDFILE"
 
