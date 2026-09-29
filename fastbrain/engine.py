@@ -6,6 +6,32 @@ class FastBrain:
     def __init__(self,cfg,db,registry,semantic,context,micro,experience):
         self.cfg=cfg;self.db=db;self.registry=registry;self.semantic=semantic;self.context=context;self.micro=micro;self.experience=experience
 
+    @staticmethod
+    def _primary_action_text(text):
+        """Return the first actionable clause for safe non-communication routing.
+
+        The full original text is still passed to MicroReasoner for ordered plan
+        construction. We only shorten the text used to choose/extract the primary
+        skill, and only when the suffix clearly begins another known local action.
+        """
+        t=' '.join(str(text or '').strip().split())
+        low=t.lower()
+        # Never split message/call text here: conjunctions can legitimately be
+        # part of a message body and communication has its own guarded parser.
+        if re.match(r'^(?:message|send|tell|text|sms|whatsapp|call|phone|ring)\b',low):
+            return t
+        action_start=r'(?:open|launch|play|set\s+volume|volume|turn\s+torch|torch\s+(?:on|off)|flashlight\s+(?:on|off)|battery|wifi\s+status)\b'
+        patterns=[
+            rf'^(.*?)(?:\s*,\s*(?:after\s+that\s+|next\s+)?)(?={action_start})',
+            rf'^(.*?)(?:\s+(?:and\s+then|then|after\s+that|next)\s+)(?={action_start})',
+            rf'^(.*?)(?:\s+and\s+)(?={action_start})',
+        ]
+        for pattern in patterns:
+            m=re.match(pattern,t,re.I)
+            if m and m.group(1).strip():
+                return m.group(1).strip(' ,')
+        return t
+
     def _confirmation_intent(self,text):
         low=' '.join(text.lower().strip().split())
         pending=self.context.pending_confirmation()
@@ -122,9 +148,6 @@ class FastBrain:
     def _deterministic(self,text):
         low=' '.join(text.lower().split());fixed={'torch on':'torch_on','turn torch on':'torch_on','torch jalao':'torch_on','torch off':'torch_off','turn torch off':'torch_off','torch band karo':'torch_off','battery':'battery_status','battery status':'battery_status','wifi status':'wifi_status','pause music':'pause_music','resume music':'resume_music'}
         if low in fixed:return fixed[low],.995
-        # Preserve deterministic confidence for a known first action in a compound
-        # command. The MicroReasoner still owns parsing/ordering of later steps.
-        # Only promote when the suffix clearly begins another supported action.
         for phrase in sorted(fixed,key=len,reverse=True):
             if not low.startswith(phrase):
                 continue
@@ -142,18 +165,22 @@ class FastBrain:
         return None,0
 
     def route(self,text):
-        start=time.perf_counter(); skill,conf,args,reason=self._confirmation_intent(text)
-        if not skill:skill,conf,args,reason=self._message_intent(text)
-        if not skill:skill,conf,args,reason=self._media_intent(text)
-        if not skill:skill,conf,args,reason=self._followup(text)
+        start=time.perf_counter(); primary_text=self._primary_action_text(text)
+        skill,conf,args,reason=self._confirmation_intent(text)
+        # Communication keeps the full original sentence. Other domains choose
+        # their primary intent from the first recognized action clause only.
+        routing_text=text if re.match(r'^(?:message|send|tell|text|sms|whatsapp|call|phone|ring)\b',text.strip(),re.I) else primary_text
+        if not skill:skill,conf,args,reason=self._message_intent(routing_text)
+        if not skill:skill,conf,args,reason=self._media_intent(routing_text)
+        if not skill:skill,conf,args,reason=self._followup(routing_text)
         if not skill:
-            skill,conf=self._deterministic(text);reason='deterministic' if skill else 'semantic';args={}
+            skill,conf=self._deterministic(routing_text);reason='deterministic' if skill else 'semantic';args={}
         if not skill:
-            _,d,_=self.semantic.route(text);skill,conf=d.choice,d.confidence
+            _,d,_=self.semantic.route(routing_text);skill,conf=d.choice,d.confidence
         s=self.registry.get(skill) if skill else None
         if not s or skill=='normal_hermes':r=RouteResult('hermes',confidence=conf,reason=reason if skill=='normal_hermes' else 'unknown_or_complex')
         else:
-            if not args:args=self._extract(text,skill)
+            if not args:args=self._extract(routing_text,skill)
             needs=s.get('arguments',{})
             if skill in {'call_contact','send_whatsapp','send_sms'} and args.get('contact') in {'him','her','them'}:
                 recent=self.context.recent('person')
