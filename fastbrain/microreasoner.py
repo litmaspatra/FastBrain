@@ -13,8 +13,6 @@ class MicroReasoner:
 
     @staticmethod
     def _split_actions(text):
-        # Explicit sequencing only. Natural fillers such as "after that" and
-        # "next" are accepted, but ordinary prose is not split aggressively.
         parts=re.split(
             r'\s*(?:,|\band\s+then\b|\bthen\b|\band\s+after\s+that\b|\bafter\s+that\b|\bnext\b|\band\b)\s*',
             text.strip(), flags=re.I,
@@ -23,8 +21,6 @@ class MicroReasoner:
 
     @staticmethod
     def _split_communication_actions(text):
-        # Communication message bodies may legitimately contain "and", so only
-        # split on stronger sequencing markers here.
         parts=re.split(
             r'\s*(?:,|\band\s+then\b|\bthen\b|\band\s+after\s+that\b|\bafter\s+that\b|\bnext\b)\s*',
             text.strip(), flags=re.I,
@@ -36,9 +32,6 @@ class MicroReasoner:
         state=state or {}
         c=' '.join(clause.strip().split())
         low=c.lower()
-
-        # Same-command referents are resolved from the plan state, never from
-        # stale global working memory.
         if low in {'open it','open it again','launch it','launch it again'} and state.get('app'):
             return {'skill':'open_app','arguments':{'app':state['app']},'source':'plan_context'}
         if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on (?:yt music|youtube music)',low) and state.get('music_query'):
@@ -47,7 +40,6 @@ class MicroReasoner:
             return {'skill':'play_music','arguments':{'query':state['music_query'],'player':'simpmusic'},'source':'plan_context'}
         if re.fullmatch(r'(?:play|open) (?:it|this)(?: again)? on youtube',low) and state.get('media_query'):
             return {'skill':'play_video','arguments':{'query':state['media_query'],'player':'youtube','latest':False},'source':'plan_context'}
-
         m=re.match(r'^(?:open|launch)\s+(.+)$',c,re.I)
         if m:return {'skill':'open_app','arguments':{'app':m.group(1).strip()},'source':'microreasoner'}
         m=re.match(r'^(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})$',c,re.I)
@@ -92,6 +84,21 @@ class MicroReasoner:
             state['contact']=arguments['contact']
         return state
 
+    @staticmethod
+    def _deferred_clause(clause,state=None):
+        state=state or {}
+        keep={k:state[k] for k in ('app','contact','music_query','media_query') if state.get(k)}
+        return {'op':'hermes_clause','text':clause,'source':'planner','deferred':True,'context':keep}
+
+    @staticmethod
+    def _battery_condition(text):
+        m=re.search(r'\bif\s+(?:it(?:\s*is|\'s)?|battery(?:\s+is)?)\s+(below|under|less\s+than|above|over|more\s+than)\s+(\d{1,3})\s*%?\s+(.+)$',text,re.I)
+        if not m:return None
+        word=m.group(1).lower(); threshold=max(0,min(100,int(m.group(2))))
+        op='lt' if word in {'below','under','less than'} else 'gt'
+        action=m.group(3).strip(' ,')
+        return op,threshold,action
+
     def _natural_communication(self,text,skill,args):
         t=' '.join(text.strip().split())
         if skill=='call_contact' and not args.get('contact'):
@@ -128,14 +135,10 @@ class MicroReasoner:
         plan=[]; low=' '.join(text.lower().split())
         comm_parts=self._split_communication_actions(text) if skill in {'send_whatsapp','send_sms'} else []
         parse_text=comm_parts[0] if len(comm_parts)>1 else text
-        # When a communication command has sequenced follow-ups, re-parse only
-        # the first clause so the message body does not absorb the later actions.
         if len(comm_parts)>1:
             parsed,extraction_plan=self._natural_communication(parse_text,skill,{})
-            if parsed:
-                args.update(parsed)
-            else:
-                args,extraction_plan=self._natural_communication(parse_text,skill,args)
+            if parsed:args.update(parsed)
+            else:args,extraction_plan=self._natural_communication(parse_text,skill,args)
         else:
             args,extraction_plan=self._natural_communication(text,skill,args)
         plan.extend(extraction_plan)
@@ -143,15 +146,12 @@ class MicroReasoner:
         if skill in {'send_whatsapp','send_sms'} and args.get('message') and len(comm_parts)<=1:
             m=re.match(r'^(.*?)(?:\s+and\s+then\s+|\s+then\s+)(?:open|launch)\s+([\w .+-]+?)\s*$',str(args['message']),re.I)
             if m and m.group(1).strip() and m.group(2).strip():
-                args['message']=m.group(1).strip(' ,')
-                app=m.group(2).strip(' .,!?:;')
+                args['message']=m.group(1).strip(' ,'); app=m.group(2).strip(' .,!?:;')
                 plan.append({'skill':'open_app','arguments':{'app':app},'source':'microreasoner'})
             m=re.match(r'^(.*?)(?:\s+and\s+then\s+|\s+then\s+)(?:call|phone|ring)\s+(?:him|her|them)\s*$',str(args['message']),re.I)
             if m and m.group(1).strip():
-                args['message']=m.group(1).strip(' ,')
-                follow_contact=args.get('contact')
-                if follow_contact:
-                    plan.append({'skill':'call_contact','arguments':{'contact':follow_contact},'source':'working_memory'})
+                args['message']=m.group(1).strip(' ,'); follow_contact=args.get('contact')
+                if follow_contact:plan.append({'skill':'call_contact','arguments':{'contact':follow_contact},'source':'working_memory'})
 
         if skill in {'call_contact','send_whatsapp','send_sms'} and args.get('contact'):
             pronoun_followup = low in {
@@ -175,71 +175,61 @@ class MicroReasoner:
                 cleaned=re.sub(r'\s+(?:and\s+)?(?:then\s+)?(?:set\s+)?volume(?:\s+to)?\s+\d{1,3}\s*$', '', str(args['query']), flags=re.I).strip()
                 cleaned=re.sub(r'\s+(?:and\s+then\s+|then\s+|and\s+)(?:open|launch)\s+.+$', '', cleaned, flags=re.I).strip()
                 vague={'music','some music','something','something nice','something good','something i would like','something suitable'}
-                if cleaned.lower() in vague:
-                    args.pop('query',None)
-                elif cleaned:
-                    args['query']=cleaned
+                if cleaned.lower() in vague:args.pop('query',None)
+                elif cleaned:args['query']=cleaned
             mc=self.context.music_context()
             if not args.get('query'):
-                chosen=None
-                if mc.get('preference'):
-                    chosen={'query':str(mc['preference']),'player':None}
-                else:
-                    chosen=self.context.choose_music_from_history(mc.get('history_candidates') or [])
+                chosen={'query':str(mc['preference']),'player':None} if mc.get('preference') else self.context.choose_music_from_history(mc.get('history_candidates') or [])
                 if chosen:
                     args['query']=str(chosen['query'])
                     if chosen.get('player'):args.setdefault('player',chosen['player'])
-                else:
-                    args['query']='popular songs'
-            args.setdefault('player','simpmusic')
-            args['context']=mc
+                else:args['query']='popular songs'
+            args.setdefault('player','simpmusic'); args['context']=mc
             plan.append({'op':'choose_music','context':mc,'player':args['player'],'query':args['query']})
 
         if skill=='open_app':
             m=re.match(r'^(?:open|launch)\s+(.+?)(?=\s*(?:,|\band\s+then\b|\bthen\b|\band\b)|$)',text.strip(),re.I)
-            if m:
-                args['app']=m.group(1).strip(' .,!?:;')
+            if m:args['app']=m.group(1).strip(' .,!?:;')
             elif not args.get('app'):
-                patterns=[
+                for pattern in [
                     r'^(?:get|put|take)\s+me\s+(?:into|inside|to)\s+([\w .+-]+?)(?:\s+(?:somehow|please|pls))?$',
                     r'^(?:let me (?:use|into)|bring me to|switch me to)\s+([\w .+-]+?)(?:\s+(?:somehow|please|pls))?$',
-                ]
-                for pattern in patterns:
+                ]:
                     mm=re.match(pattern,text.strip(),re.I)
                     if mm:
                         app=mm.group(1).strip(' .,!?:;')
                         if app:
-                            args['app']=app
-                            plan.append({'op':'extract_app','source':'microreasoner','value':app})
-                            break
+                            args['app']=app; plan.append({'op':'extract_app','source':'microreasoner','value':app}); break
 
-        # Communication compounds reuse the canonical contact resolved above.
         if len(comm_parts)>1 and skill in {'send_whatsapp','send_sms'}:
             state=self._update_plan_state({},skill,args)
             for clause in comm_parts[1:]:
                 step=self._communication_followup_clause(clause,state)
                 if not step:
-                    plan.append({'op':'hermes_clause','text':clause,'source':'planner','deferred':True})
-                    continue
-                plan.append(step)
-                self._update_plan_state(state,step['skill'],step.get('arguments'))
+                    plan.append(self._deferred_clause(clause,state)); continue
+                plan.append(step); self._update_plan_state(state,step['skill'],step.get('arguments'))
 
-        # Generic ordered low-risk follow-ups. Seed state from the already parsed
-        # primary action so later clauses can refer to it using "it/this".
-        parts=self._split_actions(text)
-        if len(parts)>1 and skill not in {'send_whatsapp','send_sms'}:
-            state=self._update_plan_state({},skill,args)
-            for clause in parts[1:]:
-                step=self._low_risk_clause(clause,state)
-                if not step:
-                    plan.append({'op':'hermes_clause','text':clause,'source':'planner','deferred':True})
-                    continue
-                if step['skill']=='play_music' and not step['arguments'].get('query'):
-                    mc=self.context.music_context(); chosen=self.context.choose_music_from_history(mc.get('history_candidates') or [])
-                    step['arguments']['query']=str(chosen['query']) if chosen else (str(mc.get('preference')) if mc.get('preference') else 'popular songs')
-                    step['arguments']['player']=(chosen.get('player') if chosen else None) or 'simpmusic'
-                plan.append(step)
-                self._update_plan_state(state,step['skill'],step.get('arguments'))
+        condition=self._battery_condition(text) if skill=='battery_status' else None
+        if condition:
+            op,threshold,action_text=condition
+            step=self._low_risk_clause(action_text,{})
+            if step:
+                plan.append({'op':'conditional','source_result':'battery_status','operator':op,'threshold':threshold,'then':step,'source':'microreasoner'})
+            else:
+                plan.append({'op':'conditional','source_result':'battery_status','operator':op,'threshold':threshold,'then':self._deferred_clause(action_text,{}),'source':'planner'})
+        else:
+            parts=self._split_actions(text)
+            if len(parts)>1 and skill not in {'send_whatsapp','send_sms'}:
+                state=self._update_plan_state({},skill,args)
+                for clause in parts[1:]:
+                    step=self._low_risk_clause(clause,state)
+                    if not step:
+                        plan.append(self._deferred_clause(clause,state)); continue
+                    if step['skill']=='play_music' and not step['arguments'].get('query'):
+                        mc=self.context.music_context(); chosen=self.context.choose_music_from_history(mc.get('history_candidates') or [])
+                        step['arguments']['query']=str(chosen['query']) if chosen else (str(mc.get('preference')) if mc.get('preference') else 'popular songs')
+                        step['arguments']['player']=(chosen.get('player') if chosen else None) or 'simpmusic'
+                    plan.append(step); self._update_plan_state(state,step['skill'],step.get('arguments'))
 
         m=re.search(r'\b(?:and\s+)?(?:then\s+)?(?:set\s+)?volume(?:\s+to)?\s+(\d{1,3})\b',low)
         if m and skill in {'play_music','choose_music_from_context'} and not any(p.get('skill')=='set_volume' for p in plan):
