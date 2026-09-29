@@ -22,6 +22,7 @@ class Config:
     semantic_dim: int = 2048
     semantic_helper: str = ""
     semantic_helper_timeout: float = 0.35
+    semantic_min_confidence: float = 0.75
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -47,6 +48,7 @@ class Config:
             semantic_dim=max(128, int(os.getenv("FASTBRAIN_SEMANTIC_DIM", "2048"))),
             semantic_helper=os.getenv("FASTBRAIN_SEMANTIC_HELPER", "").strip(),
             semantic_helper_timeout=float(os.getenv("FASTBRAIN_SEMANTIC_HELPER_TIMEOUT", "0.35")),
+            semantic_min_confidence=max(0.0,min(1.0,float(os.getenv("FASTBRAIN_SEMANTIC_MIN_CONFIDENCE","0.75")))),
         )
 
     def ensure(self) -> None:
