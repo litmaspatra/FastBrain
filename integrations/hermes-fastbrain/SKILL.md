@@ -107,71 +107,69 @@ For a reusable workflow that Hermes successfully solved and that is safe to auto
 7. Verify registration with `~/.fastbrain/fastbrain skills` and verify routing with `~/.fastbrain/fastbrain route "TRIGGER" --dry-run`.
 8. Only report success when the dry-run resolves `route: local`, the expected learned skill id, and `executor_source: fastbrain_helper`.
 
-For a first test workflow such as `prepare whatsapp` meaning "open WhatsApp and set media volume to 40", Hermes must first inspect the working commands for opening WhatsApp and setting media volume. It should then create a FastBrain-owned helper from those known-good commands and register a low-risk learned skill with examples such as `prepare whatsapp`, `get whatsapp ready`, and `whatsapp ready`.
-
 FastBrain searches `~/.fastbrain/helpers/` before Hermes helper directories for learned helper commands.
 
 ## Automatic candidate learning
 
-After Hermes successfully completes a workflow, consider whether it is a reusable FastBrain candidate. Do this without asking the user to say "create a skill" every time.
+After Hermes successfully completes a workflow, automatically evaluate whether it is a reusable FastBrain candidate. Do not wait for the user to say "create a skill".
 
-A workflow qualifies for observation only when all of these are true:
+Observe it only when all are true:
 
 - the workflow actually succeeded;
 - the steps are deterministic and reproducible;
 - a small FastBrain helper or existing helper composition can represent it;
-- the workflow is low or medium risk;
-- the workflow is likely to recur or the user has repeated/corrected it.
+- risk is low or medium;
+- the workflow is likely to recur, has been repeated, or the user has corrected it.
 
 Do not observe one-off research, open-ended reasoning, destructive actions, payments, account/security changes, deletes, publishing, or other high-risk workflows.
 
-Prefer inline JSON for observations so Hermes does not depend on temporary files:
+Prefer inline JSON:
 
 ```bash
 ~/.fastbrain/fastbrain learn-observe "USER TRIGGER PHRASE" --json '{"id":"candidate_id","category":"apps","examples":["USER TRIGGER PHRASE"],"risk":"low","executor":{"command":"helper-name"}}'
 ```
 
-A JSON file is still supported when useful:
+Low-risk candidates become `eligible` only after at least two successful observations. Medium-risk candidates remain manual-promotion candidates. High-risk candidates are rejected.
 
-```bash
-~/.fastbrain/fastbrain learn-observe "USER TRIGGER PHRASE" /path/to/candidate.json
-```
-
-The candidate definition uses the same fields as a learned skill: `id`, `category`, `examples`, `executor`, `risk`, and optional `timeout`/`arguments`.
-
-If an observation definition is missing or invalid, fix the candidate definition and retry. Do not create placeholder filenames such as `candidate.json` unless Hermes actually created that file first.
-
-FastBrain deliberately does not auto-promote after the first observation. Low-risk candidates become `eligible` only after at least two successful observations. Medium-risk candidates remain manual-promotion candidates even after repeated success. High-risk candidates are rejected.
-
-Inspect candidates with:
-
-```bash
-~/.fastbrain/fastbrain learn-candidates
-```
-
-Promote an eligible low-risk candidate with:
+When a low-risk observation returns `status: eligible`, Hermes may promote it automatically with:
 
 ```bash
 ~/.fastbrain/fastbrain learn-promote CANDIDATE_ID
 ```
 
-Only use `--force` when the user explicitly asks to create/promote that skill and the skill is not high risk.
-
-After promotion, verify with:
+Then verify:
 
 ```bash
 ~/.fastbrain/fastbrain route "USER TRIGGER PHRASE" --dry-run
 ```
 
-For low-risk repeated workflows, Hermes should perform the observation automatically after success and may promote once FastBrain reports `status: eligible`. Do not claim a skill was learned until promotion and local route verification both succeed.
+Do not claim learning succeeded until promotion and local route verification both succeed.
+
+## Correction-aware learning
+
+When the user explicitly corrects how a FastBrain candidate or learned workflow should behave, update that same candidate/skill instead of creating a duplicate.
+
+Use:
+
+```bash
+~/.fastbrain/fastbrain learn-correct CANDIDATE_ID "USER TRIGGER PHRASE" --wrong "what was wrong" --json '{"id":"CANDIDATE_ID","category":"apps","examples":["USER TRIGGER PHRASE"],"risk":"low","executor":{"command":"correct-helper"}}'
+```
+
+Rules:
+
+- The corrected definition must retain the same candidate id.
+- High-risk corrections are rejected and require manual integration.
+- If the candidate was already promoted, FastBrain updates the learned skill in place.
+- Record durable user preferences/meaning changes in Hindsight as well when appropriate.
+- If the correction changes a FastBrain-owned helper, update that helper first, test it, then call `learn-correct` with the corrected definition.
+- After correction, verify the trigger with `route ... --dry-run` before claiming it is fixed.
+- A microphone misrecognition confirmation is not a durable correction and must not call `learn-correct` unless the user explicitly teaches the mapping/behavior.
 
 ## Learning policy
 
 A workflow is a good FastBrain candidate when it is repeated or likely to repeat, deterministic enough to validate, low or medium risk, and materially faster without full Hermes reasoning.
 
 Do not create a skill after a one-off success unless the user asked for it or the workflow is clearly reusable.
-
-When a user corrects FastBrain, preserve the correction in Hindsight when durable, update the hot cache if performance-critical, and revise or re-register the learned skill if the correction changes routing or execution.
 
 ## Testing
 
