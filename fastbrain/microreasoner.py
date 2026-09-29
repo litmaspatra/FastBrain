@@ -12,12 +12,6 @@ class MicroReasoner:
         return value.strip(' ,.!?')
 
     def _natural_communication(self,text,skill,args):
-        """Fill missing communication arguments after semantic intent selection.
-
-        This never bypasses executor contact verification. It only extracts what
-        the user appears to have said so the existing alias/contact guard can
-        decide whether execution is safe.
-        """
         t=' '.join(text.strip().split())
         if skill=='call_contact' and not args.get('contact'):
             patterns=[
@@ -53,9 +47,6 @@ class MicroReasoner:
         args,extraction_plan=self._natural_communication(text,skill,args)
         plan.extend(extraction_plan)
 
-        # Safe compound follow-up: "... and then open Maps".  Strip the app
-        # clause out of a message so it is not sent to the contact, and represent
-        # the app launch as a separate low-risk plan step for the executor.
         if skill in {'send_whatsapp','send_sms'} and args.get('message'):
             m=re.match(r'^(.*?)(?:\s+and\s+then\s+|\s+then\s+)(?:open|launch)\s+([\w .+-]+?)\s*$',str(args['message']),re.I)
             if m and m.group(1).strip() and m.group(2).strip():
@@ -63,10 +54,16 @@ class MicroReasoner:
                 app=m.group(2).strip(' .,!?:;')
                 plan.append({'skill':'open_app','arguments':{'app':app},'source':'microreasoner'})
 
+            # Parse same-contact follow-up calls, but leave execution policy to the
+            # executor (call_contact remains medium risk and is not auto-chained).
+            m=re.match(r'^(.*?)(?:\s+and\s+then\s+|\s+then\s+)(?:call|phone|ring)\s+(?:him|her|them)\s*$',str(args['message']),re.I)
+            if m and m.group(1).strip():
+                args['message']=m.group(1).strip(' ,')
+                follow_contact=args.get('contact')
+                if follow_contact:
+                    plan.append({'skill':'call_contact','arguments':{'contact':follow_contact},'source':'working_memory'})
+
         if skill in {'call_contact','send_whatsapp','send_sms'} and args.get('contact'):
-            # Skip alias lookup only when the contact itself came from pronoun-based working memory.
-            # Named contacts in follow-up commands (e.g. "send the same message to Govind")
-            # must still resolve through the alias cache.
             pronoun_followup = low in {
                 'call him','call her','call them','phone him','phone her','ring him','ring her',
                 'message him the same','send it again','send the same message','send same message',
@@ -79,11 +76,13 @@ class MicroReasoner:
             else:
                 resolved,source=self.context.resolve_alias(args['contact']); args['contact']=resolved
             plan.append({'op':'resolve_contact','source':source,'value':resolved})
+            # If a compound call was captured before alias resolution, update it
+            # to the canonical resolved identity too.
+            for step in plan:
+                if step.get('skill')=='call_contact' and step.get('source')=='working_memory':
+                    step.setdefault('arguments',{})['contact']=resolved
 
         if skill in {'play_music','choose_music_from_context'}:
-            # Remove an inline volume clause from the actual search query.  If
-            # that leaves a vague request such as "play something", let the
-            # normal music-context logic choose the user's preferred query.
             if args.get('query'):
                 cleaned=re.sub(r'\s+(?:and\s+)?(?:then\s+)?(?:set\s+)?volume(?:\s+to)?\s+\d{1,3}\s*$', '', str(args['query']), flags=re.I).strip()
                 vague={'music','some music','something','something nice','something good','something i would like','something suitable'}
@@ -92,10 +91,22 @@ class MicroReasoner:
                 elif cleaned:
                     args['query']=cleaned
             mc=self.context.music_context()
-            args.setdefault('query',mc.get('preference') or 'popular songs')
+            if not args.get('query'):
+                chosen=None
+                # Explicit time-of-day preference is strongest. Otherwise use
+                # the user's successful listening history before generic fallback.
+                if mc.get('preference'):
+                    chosen=str(mc['preference'])
+                else:
+                    history=mc.get('history_candidates') or []
+                    if history and history[0].get('query'):
+                        chosen=str(history[0]['query'])
+                        if history[0].get('player'):
+                            args.setdefault('player',history[0]['player'])
+                args['query']=chosen or 'popular songs'
             args.setdefault('player','simpmusic')
             args['context']=mc
-            plan.append({'op':'choose_music','context':mc,'player':args['player']})
+            plan.append({'op':'choose_music','context':mc,'player':args['player'],'query':args['query']})
 
         if skill=='open_app' and not args.get('app'):
             patterns=[
