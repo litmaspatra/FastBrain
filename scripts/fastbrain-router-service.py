@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
 import socketserver
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
@@ -31,6 +30,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    @staticmethod
+    def _promote_trusted_source(result):
+        """Mark a contact route trusted when its plan resolved via trusted memory.
+
+        The engine may label the route with the first plan source (for example
+        ``microreasoner`` from argument extraction) even though a later
+        ``resolve_contact`` step used the trusted hot/working-memory cache.
+        The executor contact guard understands ``hot``/``working_memory`` and
+        can safely avoid a redundant Android contact-list scan in that case.
+        """
+        if result.skill not in {"call_contact", "send_whatsapp", "send_sms"}:
+            return
+        for step in result.plan or []:
+            if step.get("op") == "resolve_contact" and step.get("source") in {"hot", "working_memory"}:
+                result.context_source = step["source"]
+                return
+
     def do_GET(self):
         if self.path == "/health":
             self._send(200, {"ok": True, "status": "ready"})
@@ -53,6 +69,7 @@ class Handler(BaseHTTPRequestHandler):
             execute = (form.get("execute") or ["0"])[0] in {"1", "true", "yes"}
             stack = self.server.stack
             result = stack["engine"].route(text)
+            self._promote_trusted_source(result)
             payload = result.to_dict()
             if execute or dry_run:
                 payload["execution"] = stack["executor"].execute(result, dry_run=dry_run)
