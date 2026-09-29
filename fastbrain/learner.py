@@ -11,8 +11,13 @@ class SkillLearner:
         if definition.get('risk')=='high':raise ValueError('high-risk skills require manual integration')
         self.registry.register(definition); return definition
 
-    def correction(self,text,wrong,corrected,metadata=None):
-        self.db.conn.execute('INSERT INTO corrections(input,wrong,corrected,metadata,created_at) VALUES(?,?,?,?,?)',(text,wrong,corrected,json.dumps(metadata or {}),time.time())); self.db.conn.commit()
+    def correction(self,text,wrong,corrected,metadata=None,skill=None):
+        now=time.time()
+        self.db.conn.execute('INSERT INTO corrections(input,wrong,corrected,metadata,created_at) VALUES(?,?,?,?,?)',(text,wrong,corrected,json.dumps(metadata or {}),now))
+        if skill:
+            self.db.conn.execute("""INSERT INTO experience(skill,uses,successes,total_latency_ms,failures,corrections,updated_at)
+            VALUES(?,0,0,0,0,1,?) ON CONFLICT(skill) DO UPDATE SET corrections=corrections+1,updated_at=excluded.updated_at""",(skill,now))
+        self.db.conn.commit()
 
     @staticmethod
     def _candidate_id(phrase,definition):
@@ -68,7 +73,7 @@ class SkillLearner:
         now=time.time()
         self.db.conn.execute('UPDATE learning_candidates SET phrase=?,definition=?,score=?,status=?,reason=?,updated_at=? WHERE id=?',
             (phrase,json.dumps(definition,ensure_ascii=False),score,status,reason,now,candidate_id))
-        self.correction(phrase, wrong or json.dumps(old_definition,ensure_ascii=False), json.dumps(definition,ensure_ascii=False), metadata or {'candidate_id':candidate_id})
+        self.correction(phrase, wrong or json.dumps(old_definition,ensure_ascii=False), json.dumps(definition,ensure_ascii=False), metadata or {'candidate_id':candidate_id}, skill=candidate_id if was_promoted else None)
         if was_promoted:
             self.learn(definition)
         self.db.conn.commit()
