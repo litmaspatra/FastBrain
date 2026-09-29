@@ -108,6 +108,13 @@ def main():
     promote.add_argument("candidate_id")
     promote.add_argument("--force", action="store_true")
 
+    correct = sub.add_parser("learn-correct")
+    correct.add_argument("candidate_id")
+    correct.add_argument("phrase")
+    correct.add_argument("json_file", nargs="?")
+    correct.add_argument("--json", dest="inline_json")
+    correct.add_argument("--wrong", default="")
+
     sub.add_parser("skills")
     sub.add_parser("stats")
 
@@ -158,15 +165,13 @@ def main():
         ok=bool(verified) and all(x["ok"] for x in verified); print(json.dumps({"ok":ok,"canonical":canonical,"aliases":verified},indent=2,ensure_ascii=False)); return 0 if ok else 5
 
     if args.cmd == "skill-add":
-        try:
-            definition=_load_definition(args.json_file)
+        try: definition=_load_definition(args.json_file)
         except ValueError as exc:
             print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
         learned=stack["learner"].learn(definition); print(json.dumps({"ok":True,"skill":learned},indent=2,ensure_ascii=False)); return 0
 
     if args.cmd == "learn-observe":
-        try:
-            definition=_load_definition(args.json_file,args.inline_json)
+        try: definition=_load_definition(args.json_file,args.inline_json)
         except ValueError as exc:
             print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
         payload=stack["learner"].observe(args.phrase,definition,successful=not args.failed); print(json.dumps(payload,indent=2,ensure_ascii=False)); return 0 if payload.get("ok") else 6
@@ -175,7 +180,18 @@ def main():
         print(json.dumps(stack["learner"].candidates(),indent=2,ensure_ascii=False)); return 0
 
     if args.cmd == "learn-promote":
-        learned=stack["learner"].promote(args.candidate_id,force=args.force); print(json.dumps({"ok":True,"skill":learned},indent=2,ensure_ascii=False)); return 0
+        try: learned=stack["learner"].promote(args.candidate_id,force=args.force)
+        except ValueError as exc:
+            print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
+        print(json.dumps({"ok":True,"skill":learned},indent=2,ensure_ascii=False)); return 0
+
+    if args.cmd == "learn-correct":
+        try:
+            definition=_load_definition(args.json_file,args.inline_json)
+            payload=stack["learner"].correct_candidate(args.candidate_id,args.phrase,definition,wrong=args.wrong)
+        except ValueError as exc:
+            print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
+        print(json.dumps(payload,indent=2,ensure_ascii=False)); return 0
 
     if args.cmd == "memory-debug":
         print(json.dumps(stack["memory"].debug_direct(args.type,args.subject,args.scope),indent=2,ensure_ascii=False)); return 0
