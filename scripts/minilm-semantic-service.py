@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse,json,os,re,socket,sqlite3,time
+import argparse,hashlib,json,os,re,socket,sqlite3,time
 from pathlib import Path
 
 TOKEN_RE=re.compile(r"\w+|[^\w\s]",re.UNICODE)
@@ -62,9 +62,30 @@ def load_examples(skills_path:Path,db_path:Path):
             if isinstance(ex,str) and ex.strip():rows.append((sid,ex.strip()))
     return rows
 
+def learned_skills_fingerprint(db_path:Path):
+    """Fingerprint only learned skill definitions, not unrelated DB writes.
+
+    FastBrain writes route_log/experience frequently. Watching the SQLite file
+    mtime made every route look like a skill change and forced a full MiniLM
+    reindex on the following request. Hashing only learned_skills keeps dynamic
+    skill reloads while ordinary telemetry writes remain cheap.
+    """
+    if not db_path.exists():return 'missing'
+    try:
+        con=sqlite3.connect(db_path)
+        rows=con.execute('SELECT enabled, definition FROM learned_skills ORDER BY rowid').fetchall()
+        con.close()
+        h=hashlib.sha256()
+        for enabled,definition in rows:
+            h.update(str(int(bool(enabled))).encode('ascii'));h.update(b'\0')
+            h.update(str(definition or '').encode('utf-8'));h.update(b'\0')
+        return h.hexdigest()
+    except Exception as exc:
+        return 'error:'+type(exc).__name__
+
 class SemanticIndex:
     def __init__(self,model:MiniLM,skills_path:Path,db_path:Path):self.model=model;self.skills_path=skills_path;self.db_path=db_path;self.stamp=None;self.reload()
-    def _stamp(self):return (self.skills_path.stat().st_mtime_ns if self.skills_path.exists() else 0,self.db_path.stat().st_mtime_ns if self.db_path.exists() else 0)
+    def _stamp(self):return (self.skills_path.stat().st_mtime_ns if self.skills_path.exists() else 0,learned_skills_fingerprint(self.db_path))
     def reload(self):
         self.examples=load_examples(self.skills_path,self.db_path)
         if not self.examples:raise RuntimeError('no skill examples found')
