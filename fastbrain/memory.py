@@ -241,8 +241,12 @@ class MemoryBridge:
                 return None
             promotable,reason=self.should_promote(typ,result)
             if not promotable:
-                if mode=="hybrid": self._cache_negative(typ,subject,scope,reason)
-                return None
+                # Keep a structurally unresolved direct result visible to the
+                # caller, but never project it into the hot cache. Negative
+                # caching is reserved for a genuine direct miss.
+                result["_promoted"] = False
+                result["_promotion_reason"] = reason
+                return result
             if mode=="hybrid":
                 promoted,reason=self.promote_direct_result(typ,subject,scope,result); result["_promoted"]=promoted; result["_promotion_reason"]=reason
             return result

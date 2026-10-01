@@ -61,7 +61,16 @@ def main() -> int:
     if not text:
         return 2
     try:
-        payload = request(Path(args.socket).expanduser(), text, args.dry_run, args.execute)
+        # Routing should be nearly instant, but --execute may run a real
+        # Android helper for several seconds.
+        timeout = 8.0 if args.execute else 0.5
+        payload = request(
+            Path(args.socket).expanduser(),
+            text,
+            args.dry_run,
+            args.execute,
+            timeout=timeout,
+        )
     except Exception as exc:
         print(f"FASTBRAIN_ROUTER_CLIENT_ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 3

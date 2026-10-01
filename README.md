@@ -100,3 +100,5 @@ Endpoints include `/health`, `/v1/route`, `/v1/skills`, `/v1/context`, `/v1/lear
 Do not integrate until standalone validation passes. `scripts/hermes-fastbrain-wrapper.sh` exits `64` on any non-local request so normal Hermes remains the fallback.
 
 See `docs/PRD.md` and `docs/HERMES_INTEGRATION.md`.
+
+For the actual Android/Termux deployment topology, active sockets, MiniLM/Hindsight configuration, Hermes pre-router behavior, and verification commands, see [`docs/CURRENT_SETUP.md`](docs/CURRENT_SETUP.md).
