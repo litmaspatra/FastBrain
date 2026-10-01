@@ -1,9 +1,9 @@
 {
-  "examples": 68,
+  "examples": 78,
   "labels": 16,
   "dim": 2048,
   "epochs": 400,
-  "train_accuracy": 0.9705882352941176,
+  "train_accuracy": 0.9615384615384616,
   "feature_hash": "blake2b-64-mod-dim",
   "onnx_ir_version": 13,
   "onnx_opset": 13
