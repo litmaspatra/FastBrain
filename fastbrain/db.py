@@ -42,6 +42,15 @@ CREATE TABLE IF NOT EXISTS route_log (
   skill TEXT, confidence REAL, memory_source TEXT, latency_ms REAL,
   route TEXT, reason TEXT, created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS route_trace (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  input TEXT NOT NULL,
+  skill TEXT,
+  route TEXT,
+  total_ms REAL,
+  stages TEXT,
+  created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS music_history (
   query TEXT NOT NULL,
   player TEXT NOT NULL DEFAULT 'simpmusic',
@@ -91,7 +100,8 @@ class DB:
         return int(cur.rowcount or 0)
 
     def work_set(self, kind,key,value):
-        self.conn.execute("INSERT INTO working_memory(kind,key,value,updated_at) VALUES(?,?,?,?) ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",(kind,key,json.dumps(value),time.time())); self.conn.commit()
+        self.conn.execute("INSERT INTO working_memory(kind,key,value,updated_at) VALUES(?,?,?,?) ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",(kind,key,json.dumps(value),time.time()))
+        self.conn.commit()
 
     def work_recent(self,kind,limit=10):
         out=[]
@@ -141,9 +151,6 @@ class DB:
         query=m.group(1).strip()
         player='simpmusic'
 
-        # Historical route_log rows can contain an entire compound command.
-        # Keep only the first music clause before looking for a player suffix so
-        # examples like "play Arijit and then open WhatsApp" become "Arijit".
         compound_patterns=[
             r'\s*,\s*(?:after\s+that\s+|next\s+)?(?=(?:open|launch|play|set\s+volume|volume|turn\s+torch|torch\s+(?:on|off)|flashlight\s+(?:on|off))\b)',
             r'\s+(?:and\s+then|then|after\s+that|next)\s+(?=(?:open|launch|play|set\s+volume|volume|turn\s+torch|torch\s+(?:on|off)|flashlight\s+(?:on|off))\b)',
@@ -172,11 +179,6 @@ class DB:
         return query, player
 
     def music_request_history(self, limit=20, scan_limit=500):
-        """Infer what the user repeatedly asks to hear from existing route history.
-
-        This is preference evidence, not proof of successful playback. Successful
-        music_history rows remain higher-confidence evidence in ContextEngine.
-        """
         agg=defaultdict(lambda:{'requests':0,'last_requested_at':0.0,'query':None,'player':'simpmusic'})
         rows=self.conn.execute("""SELECT input,created_at FROM route_log
             WHERE skill IN ('play_music','choose_music_from_context')
@@ -197,4 +199,12 @@ class DB:
         return out[:int(limit)]
 
     def record_route(self, text, result):
-        self.conn.execute("INSERT INTO route_log(input,domain,skill,confidence,memory_source,latency_ms,route,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)",(text,result.domain,result.skill,result.confidence,result.context_source,result.latency_ms,result.route,result.reason,time.time())); self.conn.commit()
+        self.conn.execute("INSERT INTO route_log(input,domain,skill,confidence,memory_source,latency_ms,route,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)",(text,result.domain,result.skill,result.confidence,result.context_source,result.latency_ms,result.route,result.reason,time.time()))
+        self.conn.commit()
+
+    def record_trace(self, text, skill, route, total_ms, stages):
+        self.conn.execute(
+            "INSERT INTO route_trace(input,skill,route,total_ms,stages,created_at) VALUES(?,?,?,?,?,?)",
+            (text, skill, route, total_ms, json.dumps(stages), time.time()),
+        )
+        self.conn.commit()
