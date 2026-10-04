@@ -12,6 +12,10 @@ from pathlib import Path
 from .models import RouteResult
 
 
+def _fb_home() -> Path:
+    return Path(os.environ.get("FASTBRAIN_HOME") or (Path.home() / ".fastbrain")).expanduser()
+
+
 class Executor:
     """Execute FastBrain skills while reusing the working Hermes Android layer."""
 
@@ -23,7 +27,7 @@ class Executor:
     @staticmethod
     def _helper_candidates(name: str):
         home = Path.home()
-        return [home / ".fastbrain" / "helpers" / name, home / "hermes-phone" / "bin" / name, home / ".hermes" / "bin" / name, home / "bin" / name]
+        return [_fb_home() / "helpers" / name, home / "hermes-phone" / "bin" / name, home / ".hermes" / "bin" / name, home / "bin" / name]
 
     @staticmethod
     def _is_executable(path: Path) -> bool:
@@ -85,7 +89,7 @@ class Executor:
 
     def _resolve_command(self, result, argv):
         if result.skill in {"play_music", "choose_music_from_context", "play_video"}:
-            fast_media = Path.home() / ".fastbrain" / "bin" / "fast-media"
+            fast_media = _fb_home() / "bin" / "fast-media"
             if self._is_executable(fast_media):
                 query = str(result.arguments.get("query") or "popular songs")
                 if result.skill == "play_video":
@@ -105,12 +109,14 @@ class Executor:
             for candidate in self._helper_candidates(helper_name):
                 if self._is_executable(candidate):
                     return [str(candidate), contact, message], "hermes_helper"
+        # Known helper directories win over PATH so a learned helper can't be shadowed
+        # (or impersonated) by an unrelated system binary of the same name.
+        for candidate in self._helper_candidates(argv[0]):
+            if self._is_executable(candidate):
+                return [str(candidate), *argv[1:]], ("fastbrain_helper" if candidate.parent == _fb_home() / "helpers" else "hermes_helper")
         path = shutil.which(argv[0])
         if path:
             return [path, *argv[1:]], "path"
-        for candidate in self._helper_candidates(argv[0]):
-            if self._is_executable(candidate):
-                return [str(candidate), *argv[1:]], ("fastbrain_helper" if "/.fastbrain/helpers/" in str(candidate) else "hermes_helper")
         dispatcher = Path.home() / "hermes-phone" / "bin" / "phone"
         if not self._is_executable(dispatcher):
             return None, None
@@ -182,25 +188,33 @@ class Executor:
         return None
 
     @staticmethod
+    def _charging_from_word(word):
+        """True/False/None for a status word. Negatives are tested first because
+        'discharging' and 'not charging' both contain 'charging'."""
+        w = re.sub(r"[_\s-]+", " ", str(word or "").strip().lower())
+        if not w:
+            return None
+        if "discharging" in w or "not charging" in w or "unplugged" in w:
+            return False
+        if "charging" in w or "full" in w or "plugged" in w:
+            return True
+        return None
+
+    @staticmethod
     def _extract_charging(text):
         s = str(text or "")
         try:
             obj = json.loads(s)
-            if isinstance(obj, dict):
-                status = str(obj.get("status") or obj.get("plugged") or "").strip().lower()
-                if status:
-                    if any(x in status for x in ("charging", "full", "ac", "usb", "wireless")):
-                        return True
-                    if any(x in status for x in ("discharging", "not charging", "unplugged")):
-                        return False
         except Exception:
-            pass
-        low = s.lower()
-        if re.search(r"\b(?:not charging|discharging|unplugged)\b", low):
-            return False
-        if re.search(r"\b(?:charging|full)\b", low):
-            return True
-        return None
+            obj = None
+        if isinstance(obj, dict):
+            # termux-battery-status: status=CHARGING|DISCHARGING|NOT_CHARGING|FULL, plugged=PLUGGED_AC|UNPLUGGED...
+            for key in ("status", "plugged"):
+                verdict = Executor._charging_from_word(obj.get(key))
+                if verdict is not None:
+                    return verdict
+            return None
+        return Executor._charging_from_word(s)
 
     @staticmethod
     def _extract_wifi_connected(text):
@@ -348,7 +362,7 @@ class Executor:
             self.experience.record(result.skill, ok, latency_ms)
             followup_results = []
             if ok:
-                primary_output = (proc.stdout or "") + "\n" + (proc.stderr or "")
+                primary_output = proc.stdout if (proc.stdout or "").strip() else (proc.stderr or "")  # keep stdout clean so JSON parses
                 for item in followups:
                     if item.get("blocked"):
                         followup_results.append({k: v for k, v in item.items() if k not in {"result", "timeout"}})

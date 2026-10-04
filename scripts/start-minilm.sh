@@ -8,14 +8,20 @@ DB="${FASTBRAIN_DB:-$FB_HOME/fastbrain.db}"
 SOCK="${FASTBRAIN_MINILM_SOCKET:-$FB_HOME/minilm/minilm.sock}"
 PIDFILE="$FB_HOME/minilm/minilm.pid"
 LOG="$FB_HOME/minilm/minilm.log"
-PY="${FASTBRAIN_MINILM_PYTHON:-python3.14}"
+# onnxruntime may only exist for one of the installed Pythons: choose the first that imports it.
+PY=""
+for c in "${FASTBRAIN_MINILM_PYTHON:-}" python3.14 python3.13 python3; do
+  [ -n "$c" ] || continue
+  p="$(command -v "$c" 2>/dev/null)" || continue
+  if "$p" -c 'import numpy, onnxruntime' >/dev/null 2>&1; then PY="$p"; break; fi
+done
 SERVICE="$FB_HOME/bin/minilm-semantic-service.py"
 mkdir -p "$FB_HOME/minilm"
 
 for f in "$MODEL" "$VOCAB" "$SKILLS" "$SERVICE"; do
   [ -e "$f" ] || { echo "MINILM_START_ERROR missing $f"; exit 2; }
 done
-command -v "$PY" >/dev/null || { echo "MINILM_START_ERROR missing $PY"; exit 2; }
+[ -n "$PY" ] || { echo "MINILM_START_ERROR no python can import numpy+onnxruntime"; exit 2; }
 
 if [ -f "$PIDFILE" ]; then
   pid="$(cat "$PIDFILE" 2>/dev/null || true)"
@@ -26,7 +32,7 @@ if [ -f "$PIDFILE" ]; then
   rm -f "$PIDFILE"
 fi
 rm -f "$SOCK"
-nohup "$PY" "$SERVICE" --model "$MODEL" --vocab "$VOCAB" --skills "$SKILLS" --db "$DB" --socket "$SOCK" >"$LOG" 2>&1 &
+setsid nohup "$PY" "$SERVICE" --model "$MODEL" --vocab "$VOCAB" --skills "$SKILLS" --db "$DB" --socket "$SOCK" >"$LOG" 2>&1 < /dev/null &
 pid=$!
 echo "$pid" > "$PIDFILE"
 

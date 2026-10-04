@@ -4,23 +4,19 @@ set -u
 ROOT="$HOME/.fastbrain-minilm-test"
 MODEL="$ROOT/model_qint8_arm64.onnx"
 VOCAB="$ROOT/vocab.txt"
-SKILLS="$HOME/FastBrain/skills/builtin.json"
-PY="$(command -v python3.14 || true)"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+SKILLS="$REPO/skills/builtin.json"
+PY=""
+for c in "${FASTBRAIN_MINILM_PYTHON:-}" python3.14 python3.13 python3; do
+  [ -n "$c" ] || continue; p="$(command -v "$c" 2>/dev/null)" || continue
+  "$p" -c 'import numpy, onnxruntime' >/dev/null 2>&1 && { PY="$p"; break; }
+done
 
 mkdir -p "$ROOT"
 
 if [ -z "$PY" ]; then
   echo "MINILM_TEST_UNAVAILABLE"
-  echo "python3.14 not found. Nothing outside $ROOT was changed."
-  exit 0
-fi
-
-if ! "$PY" - <<'PY' >/dev/null 2>&1
-import numpy, onnxruntime
-PY
-then
-  echo "MINILM_TEST_UNAVAILABLE"
-  echo "python3.14 cannot import both numpy and onnxruntime. Nothing outside $ROOT was changed."
+  echo "No python3 can import both numpy and onnxruntime. Nothing outside $ROOT was changed."
   exit 0
 fi
 
@@ -58,7 +54,7 @@ printf 'Model: '; ls -lh "$MODEL" | awk '{print $5, $9}'
 printf 'Vocab: '; ls -lh "$VOCAB" | awk '{print $5, $9}'
 
 echo "--- MiniLM semantic benchmark ---"
-"$PY" "$HOME/FastBrain/scripts/minilm-semantic-test.py" \
+"$PY" "$REPO/scripts/minilm-semantic-test.py" \
   --model "$MODEL" \
   --vocab "$VOCAB" \
   --skills "$SKILLS"

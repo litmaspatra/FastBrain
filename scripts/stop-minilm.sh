@@ -2,7 +2,7 @@
 set -euo pipefail
 FB_HOME="${FASTBRAIN_HOME:-$HOME/.fastbrain}"
 PIDFILE="$FB_HOME/minilm/minilm.pid"
-SOCK="$FB_HOME/minilm/minilm.sock"
+SOCK="${FASTBRAIN_MINILM_SOCKET:-$FB_HOME/minilm/minilm.sock}"
 if [ -f "$PIDFILE" ]; then
   pid="$(cat "$PIDFILE" 2>/dev/null || true)"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then

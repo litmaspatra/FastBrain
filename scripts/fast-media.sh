@@ -1,6 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -u
 
+# Only the stdlib json module is needed, so any python3 works.
+PYBIN="${FASTBRAIN_PYTHON:-$(command -v python3.13 || command -v python3.14 || command -v python3 || true)}"
+[ -n "$PYBIN" ] || { echo 'ERROR: python3 not found' >&2; exit 5; }
+
 MODE="${1:-}"
 [ "$#" -gt 0 ] && shift
 
@@ -39,7 +43,7 @@ case "$MODE" in
     ;;
 esac
 
-STATE_DIR="$HOME/.fastbrain/state"
+STATE_DIR="${FASTBRAIN_HOME:-$HOME/.fastbrain}/state"
 STATE_FILE="$STATE_DIR/last-media-${MODE}.id"
 mkdir -p "$STATE_DIR"
 LAST_ID=""
@@ -52,7 +56,7 @@ if [ "$MODE" = "youtube-latest" ]; then
     "ytsearch10:$QUERY" \
     --no-warnings 2>/dev/null || true)"
 
-  VIDEO_ID="$(printf '%s' "$SEARCH_JSON" | python3.13 -c '
+  VIDEO_ID="$(printf '%s' "$SEARCH_JSON" | "$PYBIN" -c '
 import json,sys
 try:
     data=json.load(sys.stdin)
@@ -77,7 +81,7 @@ else
     --dump-single-json \
     "ytsearch5:$QUERY" \
     --no-warnings 2>/dev/null || true)"
-  VIDEO_ID="$(printf '%s' "$SEARCH_JSON" | LAST_ID="$LAST_ID" ANOTHER="$ANOTHER" python3.13 -c '
+  VIDEO_ID="$(printf '%s' "$SEARCH_JSON" | LAST_ID="$LAST_ID" ANOTHER="$ANOTHER" "$PYBIN" -c '
 import json,os,sys
 try:
     data=json.load(sys.stdin)

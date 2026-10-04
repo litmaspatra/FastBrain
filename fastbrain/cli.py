@@ -133,13 +133,14 @@ def main():
         cfg = stack["config"]
         checks = {
             "python": sys.version.split()[0],
-            "python_ok": sys.version_info[:2] == (3, 13),
+            "python_ok": sys.version_info[:2] >= (3, 13),  # 3.13 and 3.14 are both supported
             "platform": sys.platform,
             "machine": platform.machine(),
             "db": str(cfg.db_path),
             "memory_mode": cfg.memory_mode,
             "hindsight_direct_configured": bool(cfg.hindsight_url or cfg.hindsight_cmd),
             "skills": len(stack["registry"].all()),
+            "semantic": stack["semantic"].status(),
         }
         print(json.dumps(checks, indent=2)); return 0 if checks["python_ok"] else 2
 
@@ -173,7 +174,10 @@ def main():
         try: definition=_load_definition(args.json_file)
         except ValueError as exc:
             print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
-        learned=stack["learner"].learn(definition); print(json.dumps({"ok":True,"skill":learned},indent=2,ensure_ascii=False)); return 0
+        try: learned=stack["learner"].learn(definition)
+        except ValueError as exc:
+            print(json.dumps({"ok":False,"error":str(exc)},indent=2,ensure_ascii=False)); return 6
+        print(json.dumps({"ok":True,"skill":learned},indent=2,ensure_ascii=False)); return 0
 
     if args.cmd == "learn-observe":
         try: definition=_load_definition(args.json_file,args.inline_json)
@@ -221,6 +225,7 @@ def main():
             started=time.perf_counter(); memory.lookup_hot("alias",subject,"benchmark"); hot_times.append((time.perf_counter()-started)*1000)
             if direct_configured:
                 started=time.perf_counter(); memory.lookup_direct("alias",subject,"benchmark"); direct_times.append((time.perf_counter()-started)*1000)
+        stack["db"].hot_delete("alias",subject,"benchmark")  # don't leave benchmark rows in the real cache
         payload={"subject":subject,"hot":_summary(hot_times),"direct":_summary(direct_times),"direct_configured":direct_configured}
         if not direct_configured: payload["recommendation"]="configure direct Hindsight before comparing"
         elif statistics.median(direct_times)>=1000: payload["recommendation"]="hybrid: hot cache first, Hindsight on miss"

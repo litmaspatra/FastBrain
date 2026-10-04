@@ -2,12 +2,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PY="${FASTBRAIN_PYTHON:-python3.13}"
+PY=""
+for c in "${FASTBRAIN_PYTHON:-}" python3.13 python3.14 python3; do
+  [ -n "$c" ] || continue; p="$(command -v "$c" 2>/dev/null)" || continue
+  "$p" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)' 2>/dev/null && { PY="$p"; break; }
+done
 VENV="${FASTBRAIN_ONNX_TEST_HOME:-$HOME/.fastbrain-onnx-test}"
 TRAINING="${1:-$HOME/.fastbrain/fastbrain-training.jsonl}"
 OUT="$VENV/model"
 
-command -v "$PY" >/dev/null || { echo "ERROR: python3.13 is required"; exit 2; }
+[ -n "$PY" ] || { echo "ERROR: Python 3.13+ is required"; exit 2; }
 [ -f "$TRAINING" ] || { echo "ERROR: training file not found: $TRAINING"; exit 2; }
 
 # We deliberately reuse Termux's already-working packaged NumPy via
@@ -29,7 +33,7 @@ PY
 then
   cat <<EOF
 ONNX_TEST_UNAVAILABLE
-The isolated Python 3.13 venv could not see the existing Termux NumPy package.
+The isolated Python venv could not see the existing Termux NumPy package.
 Nothing outside $VENV was changed.
 EOF
   exit 4

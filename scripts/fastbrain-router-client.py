@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 import urllib.parse
 from pathlib import Path
+
+
+class NotSent(Exception):
+    """The request never reached the router, so retrying elsewhere is safe."""
 
 
 def request(sock_path: Path, text: str, dry_run: bool, execute: bool, timeout: float = 0.5) -> str:
@@ -25,7 +30,10 @@ def request(sock_path: Path, text: str, dry_run: bool, execute: bool, timeout: f
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.settimeout(timeout)
     try:
-        client.connect(str(sock_path))
+        try:
+            client.connect(str(sock_path))
+        except OSError as exc:
+            raise NotSent(str(exc)) from exc
         client.sendall(req)
         chunks = []
         while True:
@@ -61,9 +69,10 @@ def main() -> int:
     if not text:
         return 2
     try:
-        # Routing should be nearly instant, but --execute may run a real
-        # Android helper for several seconds.
-        timeout = 8.0 if args.execute else 0.5
+        # Plain routing is instant. A dry-run may still scan the Android contact list (up to
+        # ~4 s), and --execute may run a real helper for several seconds.
+        env_timeout = os.environ.get("FASTBRAIN_ROUTER_TIMEOUT")
+        timeout = float(env_timeout) if env_timeout else (8.0 if args.execute else 3.0)
         payload = request(
             Path(args.socket).expanduser(),
             text,
@@ -71,9 +80,12 @@ def main() -> int:
             args.execute,
             timeout=timeout,
         )
+    except NotSent as exc:
+        print(f"FASTBRAIN_ROUTER_CLIENT_ERROR: not sent: {exc}", file=sys.stderr)
+        return 3
     except Exception as exc:
         print(f"FASTBRAIN_ROUTER_CLIENT_ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return 3
+        return 4
     sys.stdout.write(payload)
     if not payload.endswith("\n"):
         sys.stdout.write("\n")

@@ -18,6 +18,7 @@ class UnixHTTPServer(socketserver.UnixStreamServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "FastBrainRouter/1"
+    timeout = 10  # a client that connects and then stalls must not block every later request
 
     def log_message(self, fmt, *args):
         return
@@ -59,6 +60,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0") or 0)
+            if length < 0 or length > 65536:
+                self._send(413, {"ok": False, "error": "too_large"})
+                return
             body = self.rfile.read(length).decode("utf-8")
             form = urllib.parse.parse_qs(body, keep_blank_values=True)
             text = (form.get("text") or [""])[0].strip()

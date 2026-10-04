@@ -5,12 +5,19 @@ from typing import Any
 from .db import DB
 
 class SkillRegistry:
+    # Interpreters/shells would turn a 'skill' into arbitrary code execution.
+    _FORBIDDEN_COMMANDS=frozenset({'sh','bash','dash','zsh','ash','su','sudo','python','python3','perl','ruby','node','eval','exec','env','xargs','busybox','nc','ncat','curl','wget','rm','dd','mkfs','chmod','chown'})
+
     def __init__(self, path: Path, db: DB):
         self.db=db; self.skills={}; self.learned_ids=set()
         if path.exists():
-            for s in json.loads(path.read_text()): self.skills[s['id']]=s
+            for s in json.loads(path.read_text(encoding='utf-8')): self.skills[s['id']]=s
+        self.builtin_ids=frozenset(self.skills)
         for r in db.conn.execute("SELECT id,definition FROM learned_skills WHERE enabled=1"):
-            s=json.loads(r['definition']); self.skills[s['id']]=s; self.learned_ids.add(s['id'])
+            try: s=json.loads(r['definition'])
+            except ValueError: continue
+            if s.get('id') in self.builtin_ids or not s.get('id'): continue  # learned skills never replace built-ins
+            self.skills[s['id']]=s; self.learned_ids.add(s['id'])
 
     def _learned_trusted(self, skill):
         if skill not in self.learned_ids:return True
@@ -32,7 +39,13 @@ class SkillRegistry:
 
     def register(self, skill: dict[str,Any]):
         if not re.fullmatch(r"[a-z][a-z0-9_]{2,64}",skill.get('id','')): raise ValueError('invalid skill id')
+        if skill['id'] in self.builtin_ids: raise ValueError('cannot override a built-in skill')
+        command=(skill.get('executor') or {}).get('command')
+        if not isinstance(command,str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}",command):
+            raise ValueError('executor.command must be a bare helper name (no path, no spaces)')
+        if command in self._FORBIDDEN_COMMANDS: raise ValueError(f'executor.command {command!r} is not allowed')
         skill.setdefault('category','learned'); skill.setdefault('examples',[]); skill.setdefault('risk','medium')
+        if skill['risk'] not in {'low','medium'}: raise ValueError('risk must be low or medium (high-risk skills need manual integration)')
         self.db.conn.execute("INSERT INTO learned_skills(id,definition,enabled,version,updated_at) VALUES(?,?,1,1,strftime('%s','now')) ON CONFLICT(id) DO UPDATE SET definition=excluded.definition,version=learned_skills.version+1,updated_at=excluded.updated_at",(skill['id'],json.dumps(skill)))
         self.db.conn.commit(); self.skills[skill['id']]=skill; self.learned_ids.add(skill['id'])
 

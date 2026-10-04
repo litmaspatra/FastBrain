@@ -7,8 +7,8 @@ This document describes the FastBrain installation currently running on Kartik's
 | Component | Current location | Role |
 |---|---|---|
 | FastBrain source checkout | `~/FastBrain` | GitHub repository and router scripts |
-| Installed FastBrain application | `~/.fastbrain/app` | Python 3.13 FastBrain package used by the CLI and router service |
-| FastBrain command | `~/.fastbrain/fastbrain` | Loads `~/.fastbrain/fastbrain.env`, then runs `python3.13 -m fastbrain.cli` |
+| Installed FastBrain application | `~/.fastbrain/app` | FastBrain package (Python 3.13+) used by the CLI and router service |
+| FastBrain command | `~/.fastbrain/fastbrain` | Loads `~/.fastbrain/fastbrain.env`, then runs `python -m fastbrain.cli` with the interpreter chosen at install time (3.13 or 3.14) |
 | Hot database | `~/.fastbrain/fastbrain.db` | SQLite hot cache, skills, context, and experience data |
 | Hindsight adapter | `~/.fastbrain/bin/hindsight-direct.py` | Direct lookup adapter used by the hybrid memory mode |
 | Persistent semantic service | `~/.fastbrain/bin/minilm-semantic-service.py` | MiniLM ONNX service over a Unix socket |

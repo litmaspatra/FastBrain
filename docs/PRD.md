@@ -15,7 +15,7 @@ FastBrain is Hermes' lightweight local cognitive reflex layer for Android/Termux
 
 ## Requirements
 
-- Android/Termux/aarch64, Python 3.13.
+- Android/Termux/aarch64, Python 3.13+ (tested on 3.13 and 3.14).
 - No Torch requirement; stdlib-only core.
 - Target simple-action end-to-end latency <10 s, usually <5 s.
 - Preferred total install <300 MB; hard ceiling 500 MB.

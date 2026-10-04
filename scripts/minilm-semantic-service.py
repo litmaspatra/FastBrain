@@ -158,6 +158,7 @@ def main():
         while True:
             conn,_=server.accept()
             with conn:
+                conn.settimeout(2.0)  # a client that connects and goes quiet must not hang the service
                 try:
                     req=recv_json(conn)
                     if req.get('op')=='ping':out={'ok':True,'status':'ready','examples':len(index.examples),'cache_entries':len(index.cache)}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler,HTTPServer
 from .app import build
 
 class Handler(BaseHTTPRequestHandler):
@@ -8,8 +8,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,*a):return
     def _json(self,code,obj):
         raw=json.dumps(obj).encode();self.send_response(code);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
+    MAX_BODY=65536
     def _body(self):
-        n=int(self.headers.get('Content-Length','0'));return json.loads(self.rfile.read(n) or b'{}')
+        # Browsers can't send application/json cross-site without a CORS preflight, which we never answer,
+        # so requiring it stops a random web page from POSTing to localhost.
+        if 'application/json' not in (self.headers.get('Content-Type') or '').lower():raise ValueError('Content-Type must be application/json')
+        n=int(self.headers.get('Content-Length','0') or 0)
+        if n<0 or n>self.MAX_BODY:raise ValueError('body too large')
+        data=json.loads(self.rfile.read(n) or b'{}')
+        if not isinstance(data,dict):raise ValueError('JSON object expected')
+        return data
     def do_GET(self):
         if self.path=='/health':return self._json(200,{'ok':True,'version':'0.1.0'})
         if self.path=='/v1/skills':return self._json(200,{'skills':self.stack['registry'].all()})
@@ -17,7 +25,17 @@ class Handler(BaseHTTPRequestHandler):
         if self.path=='/v1/context':return self._json(200,{'hot':self.stack['db'].hot_list()})
         return self._json(404,{'error':'not_found'})
     def do_POST(self):
-        b=self._body()
+        try:
+            b=self._body()
+        except (ValueError,TypeError) as e:
+            return self._json(400,{'error':str(e)})
+        try:
+            return self._dispatch(b)
+        except ValueError as e:
+            return self._json(400,{'error':str(e)})
+        except Exception as e:
+            return self._json(500,{'error':f'{type(e).__name__}: {e}'})
+    def _dispatch(self,b):
         if self.path in {'/v1/route','/v1/decide'}:
             r=self.stack['engine'].route(b.get('text',''));return self._json(200,r.to_dict())
         if self.path=='/v1/context':
@@ -38,4 +56,5 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404,{'error':'not_found'})
 
 def serve(host='127.0.0.1',port=8766):
-    Handler.stack=build();ThreadingHTTPServer((host,port),Handler).serve_forever()
+    # Single-threaded on purpose: one SQLite connection is shared by every request.
+    Handler.stack=build();HTTPServer((host,port),Handler).serve_forever()

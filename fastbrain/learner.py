@@ -1,6 +1,12 @@
 from __future__ import annotations
 import json,time,re
 
+def _risk(definition):
+    """Missing risk counts as 'medium' (manual promotion); unknown values count as 'high'."""
+    value=str(definition.get('risk') or 'medium').strip().lower()
+    return value if value in {'low','medium','high'} else 'high'
+
+
 class SkillLearner:
     def __init__(self,registry,db):self.registry=registry;self.db=db
 
@@ -8,7 +14,7 @@ class SkillLearner:
         required={'id','category','examples','executor'}
         missing=required-set(definition)
         if missing:raise ValueError('missing: '+','.join(sorted(missing)))
-        if definition.get('risk')=='high':raise ValueError('high-risk skills require manual integration')
+        if _risk(definition)=='high':raise ValueError('high-risk skills require manual integration')
         self.registry.register(definition); return definition
 
     def correction(self,text,wrong,corrected,metadata=None,skill=None):
@@ -26,7 +32,7 @@ class SkillLearner:
 
     @staticmethod
     def _score(definition,successful=True):
-        risk=definition.get('risk','low')
+        risk=_risk(definition)
         if risk=='high': return 0.0,'high_risk_rejected'
         score=0.0
         if successful: score+=0.45
@@ -46,7 +52,7 @@ class SkillLearner:
         row=self.db.conn.execute('SELECT observations,successes FROM learning_candidates WHERE id=?',(cid,)).fetchone()
         observations=(row['observations'] if row else 0)+1
         successes=(row['successes'] if row else 0)+(1 if successful else 0)
-        risk=definition.get('risk','low')
+        risk=_risk(definition)
         eligible=(risk=='low' and observations>=2 and successes>=2 and score>=0.8)
         status='eligible' if eligible else 'candidate'
         why='repeated_success' if eligible else ('medium_risk_manual_promotion' if risk=='medium' else 'needs_more_success')
@@ -64,7 +70,7 @@ class SkillLearner:
         old=dict(row); old_definition=json.loads(old['definition'])
         if definition.get('id') != candidate_id:
             definition=dict(definition); definition['id']=candidate_id
-        risk=definition.get('risk','low')
+        risk=_risk(definition)
         if risk=='high': raise ValueError('high-risk skills require manual integration')
         score,_=self._score(definition,True)
         was_promoted=old['status']=='promoted'
@@ -83,7 +89,7 @@ class SkillLearner:
         required={'id','category','examples','executor'}
         missing=required-set(definition)
         if missing: raise ValueError('missing: '+','.join(sorted(missing)))
-        if definition.get('risk')=='high': raise ValueError('high-risk skills require manual integration')
+        if _risk(definition)=='high': raise ValueError('high-risk skills require manual integration')
         return True
 
     def candidates(self):
@@ -95,7 +101,7 @@ class SkillLearner:
     def promote(self,candidate_id,force=False):
         row=self.db.conn.execute('SELECT * FROM learning_candidates WHERE id=?',(candidate_id,)).fetchone()
         if not row: raise ValueError('candidate not found')
-        d=dict(row); definition=json.loads(d['definition']); risk=definition.get('risk','low')
+        d=dict(row); definition=json.loads(d['definition']); risk=_risk(definition)
         if risk=='high': raise ValueError('high-risk skills require manual integration')
         if not force and d['status']!='eligible': raise ValueError('candidate is not eligible yet')
         learned=self.learn(definition)

@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS music_history (
 class DB:
     def __init__(self, path: Path):
         self.path=Path(path); self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn=sqlite3.connect(self.path, timeout=2.0)
+        self.conn=sqlite3.connect(self.path, timeout=2.0, check_same_thread=False)
         self.conn.row_factory=sqlite3.Row
         self.conn.executescript(SCHEMA); self.conn.commit()
 
@@ -88,7 +88,8 @@ class DB:
 
     def hot_list(self, typ: str|None=None):
         q="SELECT * FROM memory_hot"; args=[]
-        if typ: q+=" WHERE type=?"; args=[typ]
+        q+=" WHERE value!='null'"  # skip negative-cache markers
+        if typ: q+=" AND type=?"; args=[typ]
         rows=[]
         for r in self.conn.execute(q,args):
             d=dict(r); d['value']=json.loads(d['value']); rows.append(d)
@@ -200,6 +201,16 @@ class DB:
 
     def record_route(self, text, result):
         self.conn.execute("INSERT INTO route_log(input,domain,skill,confidence,memory_source,latency_ms,route,reason,created_at) VALUES(?,?,?,?,?,?,?,?,?)",(text,result.domain,result.skill,result.confidence,result.context_source,result.latency_ms,result.route,result.reason,time.time()))
+        self.conn.commit()
+        self._prune_logs()
+
+    def _prune_logs(self, keep=5000):
+        # route_log/route_trace grow on every request; trim them now and then.
+        self._writes = getattr(self, "_writes", 0) + 1
+        if self._writes % 500:
+            return
+        for table in ("route_log", "route_trace"):
+            self.conn.execute(f"DELETE FROM {table} WHERE id <= (SELECT COALESCE(MAX(id),0)-? FROM {table})", (keep,))
         self.conn.commit()
 
     def record_trace(self, text, skill, route, total_ms, stages):
