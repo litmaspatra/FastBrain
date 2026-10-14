@@ -41,7 +41,51 @@ class Executor:
     def _contact_similarity(cls, a, b):
         na, nb = cls._norm_contact(a), cls._norm_contact(b)
         ca, cb = na.replace(" ", ""), nb.replace(" ", "")
-        return max(SequenceMatcher(None, na, nb).ratio(), SequenceMatcher(None, ca, cb).ratio())
+        return max(SequenceMatcher(None, na, nb).ratio(), SequenceMatcher(None, ca, cb).ratio(), cls._sounds_like(a, b))
+
+    # Names are usually MIS-HEARD, not misspelled ("butagorira" for "budagodira"): compare consonants only, and treat
+    # confusable pairs (t/d, p/b, k/g, r/d, m/n ...) as nearly equal. Same rules as the app's ContactMatcher.
+    _NEAR = {"bp", "bv", "fp", "fv", "dt", "gk", "jz", "js", "ks", "jk", "kt"}
+    _NEAR2 = {"mn", "dr", "lr", "dl", "ns", "jy", "gj", "ct"}
+
+    @classmethod
+    def _skeleton(cls, value):
+        t = re.sub(r"(.)\1+", r"\1", "".join(re.findall(r"[a-z]+", str(value).lower())))
+        for a, b in (("ph", "f"), ("bh", "b"), ("dh", "d"), ("gh", "g"), ("kh", "k"), ("th", "t"), ("sh", "s"), ("ch", "c"),
+                     ("ck", "k"), ("x", "ks"), ("q", "k"), ("w", "v"), ("z", "j")):
+            t = t.replace(a, b)
+        out = []
+        for i, c in enumerate(t):
+            if c == "c":
+                c = "s" if i + 1 < len(t) and t[i + 1] in "eiy" else "k"
+            if c not in "aeiouyh":
+                out.append(c)
+        return "".join(out)
+
+    @classmethod
+    def _sub(cls, a, b):
+        if a == b:
+            return 0.0
+        p = "".join(sorted((a, b)))
+        return 0.35 if p in cls._NEAR else 0.55 if p in cls._NEAR2 else 1.0
+
+    @classmethod
+    def _sounds_like(cls, a, b):
+        best = 0.0
+        words = [str(b)] + [w for w in re.findall(r"[a-z]+", str(b).lower()) if len(w) >= 3]
+        sa = cls._skeleton(a)
+        for i, cand in enumerate(words):
+            sb = cls._skeleton(cand)
+            if len(sa) < 3 or len(sb) < 3:
+                s = 0.9 if len(sa) == 2 and sa == sb else 0.0
+            else:
+                d = [[float(i2) for i2 in range(len(sb) + 1)]] + [[float(r + 1)] + [0.0] * len(sb) for r in range(len(sa))]
+                for r in range(1, len(sa) + 1):
+                    for c in range(1, len(sb) + 1):
+                        d[r][c] = min(d[r - 1][c] + 1, d[r][c - 1] + 1, d[r - 1][c - 1] + cls._sub(sa[r - 1], sb[c - 1]))
+                s = 1 - d[len(sa)][len(sb)] / max(len(sa), len(sb))
+            best = max(best, s * (1.0 if i == 0 else 0.97))
+        return best
 
     def _contact_guard(self, result):
         if result.skill not in {"call_contact", "send_whatsapp", "send_sms"}:
@@ -76,6 +120,12 @@ class Executor:
                 self.context.clear_pending_confirmation()
             return {"ok": True, "status": "exact_contact", "contact": exact[0]}
         ranked = sorted(((self._contact_similarity(contact, name), name) for name in names), key=lambda x: x[0], reverse=True)
+        # A clear sound-alike winner (well ahead of the runner-up) is the contact that was meant: no question needed.
+        if ranked and ranked[0][0] >= 0.78 and (len(ranked) < 2 or ranked[0][0] - ranked[1][0] >= 0.12):
+            result.arguments["contact"] = ranked[0][1]
+            if self.context is not None:
+                self.context.clear_pending_confirmation()
+            return {"ok": True, "status": "fuzzy_contact", "contact": ranked[0][1], "heard": contact, "score": round(ranked[0][0], 3)}
         suggestions = []
         for score, name in ranked:
             if score < 0.45:

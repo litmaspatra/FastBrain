@@ -45,6 +45,14 @@ s = socket.socket(socket.AF_UNIX); s.settimeout(1); s.connect(sys.argv[1])
 s.sendall(b"GET /health HTTP/1.0\r\n\r\n"); raise SystemExit(0 if b" 200 " in s.recv(256) else 1)
 PYEOF
   then
+    # Loopback bridge for the Hermes Mobile app (key-protected; see fastbrain-router-tcp.py). Restarted with the router.
+    TCP="$ROOT/scripts/fastbrain-router-tcp.py"; TPID="$FB_HOME/router/tcp.pid"
+    if [ -f "$TCP" ]; then
+      [ -f "$TPID" ] && kill "$(cat "$TPID" 2>/dev/null)" 2>/dev/null || true
+      if command -v setsid >/dev/null 2>&1; then setsid nohup "$PY" "$TCP" --socket "$SOCK" >"$FB_HOME/router/tcp.log" 2>&1 < /dev/null &
+      else nohup "$PY" "$TCP" --socket "$SOCK" >"$FB_HOME/router/tcp.log" 2>&1 < /dev/null & fi
+      echo $! > "$TPID"
+    fi
     echo "FASTBRAIN_ROUTER_STARTED pid=$pid socket=$SOCK"
     exit 0
   fi
