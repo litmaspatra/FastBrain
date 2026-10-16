@@ -3,7 +3,7 @@
 
 The router listens on a Unix socket inside Termux's private folder, which other Android apps cannot open. This
 exposes the same /route and /health on 127.0.0.1:8765, but ONLY to callers that send the app's key in the
-X-Hermes-Mobile-Key header (the app writes the key to ~/.hermes-mobile/key). Any other app on the phone that
+X-Hermes-Mobile-Key header (the app writes the key to Termux's ~/.hermes-mobile/key). Any other app on the phone that
 connects to the port gets 403, so it cannot make the phone call or message anyone.
 """
 from __future__ import annotations
@@ -14,6 +14,14 @@ import os
 import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+
+def default_key_file() -> str:
+    """The app writes its key to Termux's home; inside the Debian proot that is this absolute path (as the Hermes plugin uses)."""
+    for c in (os.environ.get("HERMES_MOBILE_KEY_FILE", ""), "/data/data/com.termux/files/home/.hermes-mobile/key", str(Path.home() / ".hermes-mobile" / "key")):
+        if c and Path(c).is_file():
+            return c
+    return "/data/data/com.termux/files/home/.hermes-mobile/key"
 
 
 def read_key(path: Path) -> str:
@@ -98,7 +106,7 @@ def main() -> int:
     home = Path(os.environ.get("FASTBRAIN_HOME", Path.home() / ".fastbrain"))
     p = argparse.ArgumentParser()
     p.add_argument("--socket", default=os.environ.get("FASTBRAIN_ROUTER_SOCKET", str(home / "router" / "router.sock")))
-    p.add_argument("--key-file", default=str(Path.home() / ".hermes-mobile" / "key"))
+    p.add_argument("--key-file", default=default_key_file())
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--timeout", type=float, default=24.0, help="seconds to wait for the router (actions can take a while)")
     a = p.parse_args()

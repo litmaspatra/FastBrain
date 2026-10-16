@@ -53,12 +53,11 @@ PYEOF
       else nohup "$PY" "$TCP" --socket "$SOCK" >"$FB_HOME/router/tcp.log" 2>&1 < /dev/null & fi
       echo $! > "$TPID"
     fi
-    # Natural voice (Piper) for the app, if setup-piper.sh was run once.
-    PV="${PIPER_VOICES_DIR:-$HOME/.piper-voices}"
-    if [ -f "$ROOT/scripts/piper-tts-server.py" ] && ls "$PV"/*.onnx >/dev/null 2>&1; then
+    # Natural voice (Piper) for the app, if the piper-tts package is installed.
+    if [ -f "$ROOT/scripts/piper-tts-server.py" ] && "$PY" -c "import piper" 2>/dev/null; then
       pkill -f piper-tts-server.py 2>/dev/null || true
-      if command -v setsid >/dev/null 2>&1; then setsid nohup "$PY" "$ROOT/scripts/piper-tts-server.py" --voices-dir "$PV" >"$PV/server.log" 2>&1 < /dev/null &
-      else nohup "$PY" "$ROOT/scripts/piper-tts-server.py" --voices-dir "$PV" >"$PV/server.log" 2>&1 < /dev/null & fi
+      if command -v setsid >/dev/null 2>&1; then setsid nohup "$PY" "$ROOT/scripts/piper-tts-server.py" >"$FB_HOME/router/piper.log" 2>&1 < /dev/null &
+      else nohup "$PY" "$ROOT/scripts/piper-tts-server.py" >"$FB_HOME/router/piper.log" 2>&1 < /dev/null & fi
     fi
     echo "FASTBRAIN_ROUTER_STARTED pid=$pid socket=$SOCK"
     exit 0

@@ -34,7 +34,12 @@ class T(unittest.TestCase):
                 (d / f"{n}.onnx").write_text("x")
                 (d / f"{n}.onnx.json").write_text("{}")
             (d / "en_US-ryan-medium.onnx").write_text("x")  # no .json: not usable
-            self.assertEqual(srv.installed(d), ["en_GB-alba-low", "en_US-lessac-medium"])
+            self.assertEqual(srv.installed([d]), ["en_GB-alba-low", "en_US-lessac-medium"])
+            sub = d / "en_US-amy-medium"  # FastBrain keeps voices one folder down
+            sub.mkdir()
+            (sub / "en_US-amy-medium.onnx").write_text("x")
+            (sub / "en_US-amy-medium.onnx.json").write_text("{}")
+            self.assertIn("en_US-amy-medium", srv.installed([d, Path("/nonexistent")]))
 
     def test_synth_trims_and_scales_speed(self):
         FakePiper()
@@ -53,10 +58,10 @@ class T(unittest.TestCase):
             (d / "en_GB-alba-low.onnx").write_text("x")
             (d / "en_GB-alba-low.onnx.json").write_text("{}")
             srv._voices.clear()
-            voice, name = srv.get_voice(d, "en_US-nobody-medium")
+            voice, name = srv.get_voice([d], "en_US-nobody-medium")
             self.assertEqual(name, "en_GB-alba-low")
             self.assertIsNotNone(voice)
-            self.assertEqual(srv.get_voice(Path(tempfile.mkdtemp()), "x")[0], None)
+            self.assertEqual(srv.get_voice([Path(tempfile.mkdtemp())], "x")[0], None)
 
 
 if __name__ == "__main__":
