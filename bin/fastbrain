@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Isolated FastBrain launcher: Debian Python 3.13 virtualenv + repo-local state.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -f "$ROOT/.fastbrain.env" ]; then
+  set -a
+  . "$ROOT/.fastbrain.env"
+  set +a
+fi
+export FASTBRAIN_HOME="${FASTBRAIN_HOME:-$ROOT/.state}"
+export FASTBRAIN_DB="${FASTBRAIN_DB:-$FASTBRAIN_HOME/fastbrain.db}"
+exec "$ROOT/.venv/bin/fastbrain" "$@"
