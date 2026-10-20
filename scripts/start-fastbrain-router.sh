@@ -47,14 +47,14 @@ PYEOF
   then
     # Loopback bridge for the Hermes Mobile app (key-protected; see fastbrain-router-tcp.py). Restarted with the router.
     TCP="$ROOT/scripts/fastbrain-router-tcp.py"; TPID="$FB_HOME/router/tcp.pid"
-    if [ -f "$TCP" ]; then
+    if [ -z "${FASTBRAIN_SKIP_APP_BRIDGES:-}" ] && [ -f "$TCP" ]; then
       [ -f "$TPID" ] && kill "$(cat "$TPID" 2>/dev/null)" 2>/dev/null || true
       if command -v setsid >/dev/null 2>&1; then setsid nohup "$PY" "$TCP" --socket "$SOCK" >"$FB_HOME/router/tcp.log" 2>&1 < /dev/null &
       else nohup "$PY" "$TCP" --socket "$SOCK" >"$FB_HOME/router/tcp.log" 2>&1 < /dev/null & fi
       echo $! > "$TPID"
     fi
     # Natural voice (Piper) for the app, if the piper-tts package is installed.
-    if [ -f "$ROOT/scripts/piper-tts-server.py" ] && "$PY" -c "import piper" 2>/dev/null; then
+    if [ -z "${FASTBRAIN_SKIP_APP_BRIDGES:-}" ] && [ -f "$ROOT/scripts/piper-tts-server.py" ] && "$PY" -c "import piper" 2>/dev/null; then
       pkill -f piper-tts-server.py 2>/dev/null || true
       if command -v setsid >/dev/null 2>&1; then setsid nohup "$PY" "$ROOT/scripts/piper-tts-server.py" >"$FB_HOME/router/piper.log" 2>&1 < /dev/null &
       else nohup "$PY" "$ROOT/scripts/piper-tts-server.py" >"$FB_HOME/router/piper.log" 2>&1 < /dev/null & fi

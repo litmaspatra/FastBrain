@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler,HTTPServer
 from .app import build
+from .health import health_payload
 
 class Handler(BaseHTTPRequestHandler):
     stack=None
@@ -19,7 +20,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(data,dict):raise ValueError('JSON object expected')
         return data
     def do_GET(self):
-        if self.path=='/health':return self._json(200,{'ok':True,'version':'0.1.0'})
+        if self.path=='/health':return self._json(200,health_payload(self.stack))
         if self.path=='/v1/skills':return self._json(200,{'skills':self.stack['registry'].all()})
         if self.path=='/v1/stats':return self._json(200,{'experience':self.stack['experience'].stats()})
         if self.path=='/v1/context':return self._json(200,{'hot':self.stack['db'].hot_list()})
@@ -55,6 +56,6 @@ class Handler(BaseHTTPRequestHandler):
             self.stack['learner'].correction(b.get('input',''),b.get('wrong',''),b.get('corrected',''),b.get('metadata'));return self._json(200,{'ok':True})
         return self._json(404,{'error':'not_found'})
 
-def serve(host='127.0.0.1',port=8766):
+def serve(host='127.0.0.1',port=8768):
     # Single-threaded on purpose: one SQLite connection is shared by every request.
     Handler.stack=build();HTTPServer((host,port),Handler).serve_forever()

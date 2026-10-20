@@ -81,7 +81,7 @@ def main():
 
     server = sub.add_parser("serve")
     server.add_argument("--host", default="127.0.0.1")
-    server.add_argument("--port", type=int, default=8766)
+    server.add_argument("--port", type=int, default=8768)
 
     cache = sub.add_parser("cache-put")
     cache.add_argument("type")

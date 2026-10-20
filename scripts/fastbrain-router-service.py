@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from fastbrain.app import build
+from fastbrain.health import health_payload
 
 
 class UnixHTTPServer(socketserver.UnixStreamServer):
@@ -50,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            self._send(200, {"ok": True, "status": "ready"})
+            self._send(200, health_payload(self.server.stack))
         else:
             self._send(404, {"ok": False, "error": "not_found"})
 

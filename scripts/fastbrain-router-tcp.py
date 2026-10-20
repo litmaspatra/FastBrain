@@ -73,7 +73,14 @@ def make_handler(sock_path: Path, key_path: Path, timeout: float):
                 return self._send(404, b'{"ok":false,"error":"not_found"}')
             if not self._authorised():
                 return self._send(403, b'{"ok":false,"error":"forbidden"}')
-            self._send(200, b'{"ok":true,"status":"ready"}')
+            try:
+                raw = forward(sock_path, b"GET /health HTTP/1.0\r\n\r\n", 3.0)
+                head, sep, payload = raw.partition(b"\r\n\r\n")
+                if not sep or b" 200 " not in head.split(b"\r\n", 1)[0]:
+                    return self._send(503, b'{"ok":false,"error":"router_unavailable"}')
+                self._send(200, payload)
+            except OSError:
+                self._send(503, b'{"ok":false,"error":"router_unavailable"}')
 
         def do_POST(self):
             if self.path != "/route":
