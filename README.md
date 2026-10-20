@@ -110,14 +110,14 @@ See `docs/HINDSIGHT_INTEGRATION.md` before wiring the direct adapter to your ins
 ## Local API
 
 ```bash
-~/.fastbrain/fastbrain serve --host 127.0.0.1 --port 8766
+~/.fastbrain/fastbrain serve --host 127.0.0.1 --port 8768
 ```
 
 Endpoints include `/health`, `/v1/route`, `/v1/skills`, `/v1/context`, `/v1/learn`, `/v1/correction`, and `/v1/stats`.
 
 ## Hermes integration
 
-Do not integrate until standalone validation passes. `scripts/hermes-fastbrain-wrapper.sh` exits `64` on any non-local request so normal Hermes remains the fallback.
+Do not integrate until standalone validation passes. `scripts/hermes-fastbrain-wrapper.sh` is a sidecar-only JSON pre-router: it exits `64` only for a clean pre-execution decline; exit `75` means no automatic Hermes fallback.
 
 See `docs/PRD.md` and `docs/HERMES_INTEGRATION.md`.
 
